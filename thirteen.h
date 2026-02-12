@@ -18,6 +18,10 @@ It is inspired by the simplicity of the Mode 13h days where you initialized the 
     #include <d3d12.h>
     #include <dxgi1_6.h>
 #elif defined(__APPLE__)
+    #include <objc/objc.h>
+    #include <objc/runtime.h>
+    #include <objc/message.h>
+    #include <CoreGraphics/CoreGraphics.h>
     #include <TargetConditionals.h>
 #endif
 
@@ -625,23 +629,339 @@ namespace Thirteen
             }
         };
         #elif THIRTEEN_PLATFORM_MACOS
+        extern "C" void* MTLCreateSystemDefaultDevice(void);
+
+        using NSUInteger = unsigned long;
+        using NSInteger = long;
+
+        struct MTLSize
+        {
+            NSUInteger width;
+            NSUInteger height;
+            NSUInteger depth;
+        };
+
+        struct MTLOrigin
+        {
+            NSUInteger x;
+            NSUInteger y;
+            NSUInteger z;
+        };
+
+        inline SEL Sel(const char* name)
+        {
+            return sel_registerName(name);
+        }
+
         struct PlatformMetal : PlatformBackend
         {
-            bool InitWindow(uint32, uint32) override { return true; }
-            void PumpMessages() override {}
-            void SetTitle(const char*) override {}
-            void SetFullscreen(bool, uint32, uint32) override {}
-            void ResizeWindow(uint32, uint32, bool) override {}
-            NativeWindowHandle GetWindowHandle() const override { return nullptr; }
-            void ShutdownWindow() override {}
+            id app = nullptr;
+            id window = nullptr;
+            id contentView = nullptr;
+
+            bool InitWindow(uint32 width, uint32 height) override
+            {
+                id nsApplicationClass = (id)objc_getClass("NSApplication");
+                app = ((id(*)(id, SEL))objc_msgSend)(nsApplicationClass, Sel("sharedApplication"));
+                if (!app)
+                    return false;
+
+                ((void(*)(id, SEL, NSInteger))objc_msgSend)(app, Sel("setActivationPolicy:"), 0);
+
+                id nsWindowClass = (id)objc_getClass("NSWindow");
+                id windowAlloc = ((id(*)(id, SEL))objc_msgSend)(nsWindowClass, Sel("alloc"));
+                if (!windowAlloc)
+                    return false;
+
+                const NSUInteger styleMask = (1ull << 0) | (1ull << 1) | (1ull << 2);
+                const NSUInteger backingStoreBuffered = 2;
+                CGRect frame = CGRectMake(100.0, 100.0, (double)width, (double)height);
+                window = ((id(*)(id, SEL, CGRect, NSUInteger, NSUInteger, bool))objc_msgSend)(
+                    windowAlloc,
+                    Sel("initWithContentRect:styleMask:backing:defer:"),
+                    frame,
+                    styleMask,
+                    backingStoreBuffered,
+                    false
+                );
+                if (!window)
+                    return false;
+
+                ((void(*)(id, SEL, bool))objc_msgSend)(window, Sel("setReleasedWhenClosed:"), false);
+                contentView = ((id(*)(id, SEL))objc_msgSend)(window, Sel("contentView"));
+                if (!contentView)
+                    return false;
+
+                ((void(*)(id, SEL, id))objc_msgSend)(window, Sel("makeKeyAndOrderFront:"), nullptr);
+                ((void(*)(id, SEL, bool))objc_msgSend)(app, Sel("activateIgnoringOtherApps:"), true);
+                return true;
+            }
+
+            void PumpMessages() override
+            {
+                if (!app)
+                    return;
+
+                id dateClass = (id)objc_getClass("NSDate");
+                id distantPast = ((id(*)(id, SEL))objc_msgSend)(dateClass, Sel("distantPast"));
+                id nsStringClass = (id)objc_getClass("NSString");
+                id defaultMode = ((id(*)(id, SEL, const char*))objc_msgSend)(nsStringClass, Sel("stringWithUTF8String:"), "kCFRunLoopDefaultMode");
+
+                const unsigned long long anyMask = ~0ull;
+                while (true)
+                {
+                    id event = ((id(*)(id, SEL, unsigned long long, id, id, bool))objc_msgSend)(
+                        app,
+                        Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+                        anyMask,
+                        distantPast,
+                        defaultMode,
+                        true
+                    );
+
+                    if (!event)
+                        break;
+
+                    NSInteger eventType = ((NSInteger(*)(id, SEL))objc_msgSend)(event, Sel("type"));
+                    if (eventType == 10) // NSEventTypeKeyDown
+                    {
+                        id chars = ((id(*)(id, SEL))objc_msgSend)(event, Sel("charactersIgnoringModifiers"));
+                        if (chars)
+                        {
+                            const char* utf8 = ((const char*(*)(id, SEL))objc_msgSend)(chars, Sel("UTF8String"));
+                            if (utf8 && utf8[0] != '\0')
+                                keys[(unsigned char)utf8[0]] = true;
+                        }
+                    }
+                    else if (eventType == 11) // NSEventTypeKeyUp
+                    {
+                        id chars = ((id(*)(id, SEL))objc_msgSend)(event, Sel("charactersIgnoringModifiers"));
+                        if (chars)
+                        {
+                            const char* utf8 = ((const char*(*)(id, SEL))objc_msgSend)(chars, Sel("UTF8String"));
+                            if (utf8 && utf8[0] != '\0')
+                                keys[(unsigned char)utf8[0]] = false;
+                        }
+                    }
+                    else if (eventType == 5 || eventType == 6 || eventType == 7) // mouse down
+                    {
+                        NSInteger buttonNumber = ((NSInteger(*)(id, SEL))objc_msgSend)(event, Sel("buttonNumber"));
+                        if (buttonNumber >= 0 && buttonNumber < 3)
+                            mouseButtons[buttonNumber] = true;
+                    }
+                    else if (eventType == 8 || eventType == 9) // mouse up
+                    {
+                        NSInteger buttonNumber = ((NSInteger(*)(id, SEL))objc_msgSend)(event, Sel("buttonNumber"));
+                        if (buttonNumber >= 0 && buttonNumber < 3)
+                            mouseButtons[buttonNumber] = false;
+                    }
+                    else if (eventType == 1 || eventType == 2 || eventType == 5 || eventType == 6 || eventType == 7 || eventType == 8 || eventType == 9)
+                    {
+                        CGPoint p = ((CGPoint(*)(id, SEL))objc_msgSend)(event, Sel("locationInWindow"));
+                        mouseX = (int)p.x;
+                        mouseY = (int)(height - p.y);
+                    }
+
+                    ((void(*)(id, SEL, id))objc_msgSend)(app, Sel("sendEvent:"), event);
+                }
+
+                if (window)
+                {
+                    bool visible = ((bool(*)(id, SEL))objc_msgSend)(window, Sel("isVisible"));
+                    if (!visible)
+                        shouldQuit = true;
+                }
+            }
+
+            void SetTitle(const char* title) override
+            {
+                if (!window)
+                    return;
+                id nsStringClass = (id)objc_getClass("NSString");
+                id nsTitle = ((id(*)(id, SEL, const char*))objc_msgSend)(nsStringClass, Sel("stringWithUTF8String:"), title);
+                ((void(*)(id, SEL, id))objc_msgSend)(window, Sel("setTitle:"), nsTitle);
+            }
+
+            void SetFullscreen(bool, uint32, uint32) override
+            {
+                if (window)
+                    ((void(*)(id, SEL, id))objc_msgSend)(window, Sel("toggleFullScreen:"), nullptr);
+            }
+
+            void ResizeWindow(uint32 width, uint32 height, bool isFullscreen) override
+            {
+                if (!window || isFullscreen)
+                    return;
+                CGSize contentSize = CGSizeMake((double)width, (double)height);
+                ((void(*)(id, SEL, CGSize))objc_msgSend)(window, Sel("setContentSize:"), contentSize);
+            }
+
+            NativeWindowHandle GetWindowHandle() const override
+            {
+                return contentView;
+            }
+
+            void ShutdownWindow() override
+            {
+                if (window)
+                {
+                    ((void(*)(id, SEL))objc_msgSend)(window, Sel("close"));
+                    window = nullptr;
+                }
+                contentView = nullptr;
+                app = nullptr;
+            }
         };
 
         struct RendererMetal : RendererBackend
         {
-            bool Init(NativeWindowHandle, uint32, uint32) override { return false; }
-            bool Render(const uint8*, uint32, uint32, bool) override { return false; }
-            bool Resize(uint32, uint32) override { return false; }
-            void Shutdown() override {}
+            id device = nullptr;
+            id commandQueue = nullptr;
+            id metalLayer = nullptr;
+            id uploadBuffer = nullptr;
+            NativeWindowHandle hostView = nullptr;
+            uint32 bufferWidth = 0;
+            uint32 bufferHeight = 0;
+            size_t uploadSize = 0;
+
+            bool EnsureUploadBuffer(uint32 width, uint32 height)
+            {
+                const size_t requiredSize = (size_t)width * (size_t)height * 4u;
+                if (uploadBuffer && requiredSize == uploadSize)
+                    return true;
+
+                if (uploadBuffer)
+                {
+                    ((void(*)(id, SEL))objc_msgSend)(uploadBuffer, Sel("release"));
+                    uploadBuffer = nullptr;
+                }
+
+                // MTLResourceStorageModeShared = 0
+                uploadBuffer = ((id(*)(id, SEL, NSUInteger, NSUInteger))objc_msgSend)(
+                    device,
+                    Sel("newBufferWithLength:options:"),
+                    (NSUInteger)requiredSize,
+                    (NSUInteger)0
+                );
+                if (!uploadBuffer)
+                    return false;
+
+                uploadSize = requiredSize;
+                return true;
+            }
+
+            bool Init(NativeWindowHandle hwnd, uint32 width, uint32 height) override
+            {
+                hostView = hwnd;
+                device = (id)MTLCreateSystemDefaultDevice();
+                if (!device)
+                    return false;
+
+                commandQueue = ((id(*)(id, SEL))objc_msgSend)(device, Sel("newCommandQueue"));
+                if (!commandQueue)
+                    return false;
+
+                id layerClass = (id)objc_getClass("CAMetalLayer");
+                metalLayer = ((id(*)(id, SEL))objc_msgSend)(layerClass, Sel("layer"));
+                if (!metalLayer)
+                    return false;
+
+                ((void(*)(id, SEL, id))objc_msgSend)(metalLayer, Sel("setDevice:"), device);
+                // MTLPixelFormatRGBA8Unorm = 70
+                ((void(*)(id, SEL, NSUInteger))objc_msgSend)(metalLayer, Sel("setPixelFormat:"), (NSUInteger)70);
+                ((void(*)(id, SEL, bool))objc_msgSend)(metalLayer, Sel("setFramebufferOnly:"), false);
+
+                CGRect layerFrame = CGRectMake(0.0, 0.0, (double)width, (double)height);
+                ((void(*)(id, SEL, CGRect))objc_msgSend)(metalLayer, Sel("setFrame:"), layerFrame);
+
+                if (hostView)
+                {
+                    id view = (id)hostView;
+                    ((void(*)(id, SEL, bool))objc_msgSend)(view, Sel("setWantsLayer:"), true);
+                    ((void(*)(id, SEL, id))objc_msgSend)(view, Sel("setLayer:"), metalLayer);
+                }
+
+                bufferWidth = width;
+                bufferHeight = height;
+                return EnsureUploadBuffer(width, height);
+            }
+
+            bool Render(const uint8* pixels, uint32 width, uint32 height, bool) override
+            {
+                if (!metalLayer || !commandQueue || !EnsureUploadBuffer(width, height))
+                    return false;
+
+                id drawable = ((id(*)(id, SEL))objc_msgSend)(metalLayer, Sel("nextDrawable"));
+                if (!drawable)
+                    return true;
+
+                void* mapped = ((void*(*)(id, SEL))objc_msgSend)(uploadBuffer, Sel("contents"));
+                if (!mapped)
+                    return false;
+                memcpy(mapped, pixels, (size_t)width * (size_t)height * 4u);
+
+                id texture = ((id(*)(id, SEL))objc_msgSend)(drawable, Sel("texture"));
+                id commandBuffer = ((id(*)(id, SEL))objc_msgSend)(commandQueue, Sel("commandBuffer"));
+                if (!texture || !commandBuffer)
+                    return false;
+
+                id blit = ((id(*)(id, SEL))objc_msgSend)(commandBuffer, Sel("blitCommandEncoder"));
+                if (!blit)
+                    return false;
+
+                MTLSize sourceSize = { (NSUInteger)width, (NSUInteger)height, (NSUInteger)1 };
+                MTLOrigin destOrigin = { (NSUInteger)0, (NSUInteger)0, (NSUInteger)0 };
+                ((void(*)(id, SEL, id, NSUInteger, NSUInteger, NSUInteger, MTLSize, id, NSUInteger, NSUInteger, MTLOrigin))objc_msgSend)(
+                    blit,
+                    Sel("copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:"),
+                    uploadBuffer,
+                    (NSUInteger)0,
+                    (NSUInteger)(width * 4),
+                    (NSUInteger)(width * height * 4),
+                    sourceSize,
+                    texture,
+                    (NSUInteger)0,
+                    (NSUInteger)0,
+                    destOrigin
+                );
+
+                ((void(*)(id, SEL))objc_msgSend)(blit, Sel("endEncoding"));
+                ((void(*)(id, SEL, id))objc_msgSend)(commandBuffer, Sel("presentDrawable:"), drawable);
+                ((void(*)(id, SEL))objc_msgSend)(commandBuffer, Sel("commit"));
+                return true;
+            }
+
+            bool Resize(uint32 width, uint32 height) override
+            {
+                bufferWidth = width;
+                bufferHeight = height;
+                if (metalLayer)
+                {
+                    CGRect layerFrame = CGRectMake(0.0, 0.0, (double)width, (double)height);
+                    ((void(*)(id, SEL, CGRect))objc_msgSend)(metalLayer, Sel("setFrame:"), layerFrame);
+                }
+                return EnsureUploadBuffer(width, height);
+            }
+
+            void Shutdown() override
+            {
+                if (uploadBuffer)
+                {
+                    ((void(*)(id, SEL))objc_msgSend)(uploadBuffer, Sel("release"));
+                    uploadBuffer = nullptr;
+                }
+                if (commandQueue)
+                {
+                    ((void(*)(id, SEL))objc_msgSend)(commandQueue, Sel("release"));
+                    commandQueue = nullptr;
+                }
+                device = nullptr;
+                metalLayer = nullptr;
+                hostView = nullptr;
+                bufferWidth = 0;
+                bufferHeight = 0;
+                uploadSize = 0;
+            }
         };
         #else
         struct PlatformStub : PlatformBackend
