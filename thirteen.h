@@ -32,7 +32,7 @@ namespace Thirteen
     uint8* Init(uint32 width = 1024, uint32 height = 768, bool fullscreen = false);
 
     // Renders a frame by copying Pixels to the screen. Returns false when the application should quit.
-    bool Render();
+    [[nodiscard]] bool Render();
 
     // Cleans up all resources and shuts down DirectX and the window.
     void Shutdown();
@@ -41,7 +41,7 @@ namespace Thirteen
     void SetVSync(bool enabled);
 
     // Returns whether vertical sync is enabled.
-    bool GetVSync();
+    [[nodiscard]] bool GetVSync();
 
     // Sets the application name displayed in the window title bar.
     void SetApplicationName(const char* name);
@@ -50,19 +50,19 @@ namespace Thirteen
     void SetFullscreen(bool fullscreen);
 
     // Returns whether the application is currently in fullscreen mode.
-    bool GetFullscreen();
+    [[nodiscard]] bool GetFullscreen();
 
     // Returns the current width of the rendering surface in pixels.
-    uint32 GetWidth();
+    [[nodiscard]] uint32 GetWidth();
 
     // Returns the current height of the rendering surface in pixels.
-    uint32 GetHeight();
+    [[nodiscard]] uint32 GetHeight();
 
     // Sets the size of the rendering surface. Recreates internal buffers. Returns the new pixel buffer pointer on success, or nullptr on failure. The returned pointer may differ from the one returned by Init().
-    uint8* SetSize(uint32 width, uint32 height);
+    [[nodiscard]] uint8* SetSize(uint32 width, uint32 height);
 
     // Returns the duration of the previous frame in seconds.
-    double GetDeltaTime();
+    [[nodiscard]] double GetDeltaTime();
 
     // Gets the current mouse position in pixels.
     void GetMousePosition(int& x, int& y);
@@ -71,16 +71,16 @@ namespace Thirteen
     void GetMousePositionLastFrame(int& x, int& y);
 
     // Returns whether a mouse button is currently pressed (0=left, 1=right, 2=middle).
-    bool GetMouseButton(int button);
+    [[nodiscard]] bool GetMouseButton(int button);
 
     // Returns whether a mouse button was pressed in the previous frame (0=left, 1=right, 2=middle).
-    bool GetMouseButtonLastFrame(int button);
+    [[nodiscard]] bool GetMouseButtonLastFrame(int button);
 
     // Returns whether a keyboard key is currently pressed (use Windows virtual key codes).
-    bool GetKey(int keyCode);
+    [[nodiscard]] bool GetKey(int keyCode);
 
     // Returns whether a keyboard key was pressed in the previous frame (use Windows virtual key codes).
-    bool GetKeyLastFrame(int keyCode);
+    [[nodiscard]] bool GetKeyLastFrame(int keyCode);
 
     // ========================================
 
