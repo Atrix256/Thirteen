@@ -40,13 +40,11 @@ int main()
 }
 ```
 
-## Credits
-
-Alan Wolfe - API, examples and Win32/DX12 implementation
-
-Francesco Carucci - MacOS/Metal implementation
-
 ## Examples
+
+How to build examples:
+* **Windows**: build Examples.sln
+* **Mac**: clang++ main.cpp -framework Metal -framework Cocoa
 
 ### Simple
 A basic example showing the fundamentals of Thirteen. [View source code](Examples/Simple/main.cpp)
@@ -223,3 +221,9 @@ bool keyReleased = !Thirteen::GetKey(VK_SPACE) && Thirteen::GetKeyLastFrame(VK_S
 // Same pattern works for mouse buttons
 bool clicked = Thirteen::GetMouseButton(0) && !Thirteen::GetMouseButtonLastFrame(0);
 ```
+
+## Credits
+
+Alan Wolfe - API, examples and Win32/DX12 implementation
+
+Francesco Carucci - MacOS/Metal implementation
