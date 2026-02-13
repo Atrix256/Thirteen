@@ -42,9 +42,9 @@ int main(int argc, char** argv)
             for (size_t ix = 0; ix < c_width; ++ix)
             {
                 size_t i = (iy * c_width + ix) * 4;
-                pixels[i + 0] = unsigned char(frameIndex + ix);
-                pixels[i + 1] = unsigned char(frameIndex + iy);
-                pixels[i + 2] = unsigned char(frameIndex);
+                pixels[i + 0] = static_cast<unsigned char>(frameIndex + ix);
+                pixels[i + 1] = static_cast<unsigned char>(frameIndex + iy);
+                pixels[i + 2] = static_cast<unsigned char>(frameIndex);
                 pixels[i + 3] = 255;
             }
         }
