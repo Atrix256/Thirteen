@@ -10,6 +10,7 @@ Platforms Supported:
 * Win32/DX12
 * MacOS/Metal
 * Linux/X11+OpenGL
+* WASM/WepGPU
 
 ## Usage
 
@@ -50,6 +51,19 @@ How to build examples:
 * **Mac**: For each example: clang++ main.cpp -framework Metal -framework Cocoa -std=c++11 -DTARGET_OS_OSX
 * **Linux**: For each example: g++ main.cpp -o Simple
 
+**Web**:
+
+for each example:
+```bash
+emcc main.cpp -std=c++17 -I. \
+  --use-port=emdawnwebgpu \
+  -sASYNCIFY \
+  -sALLOW_MEMORY_GROWTH=1 \
+  -o simple.html
+```
+
+Then run a local web server and open `simple.html` in a WebGPU-enabled browser.
+
 ### Simple
 A basic example showing the fundamentals of Thirteen. [View source code](Examples/Simple/main.cpp)
 
@@ -64,22 +78,6 @@ A Mandelbrot set fractal visualizer with interactive navigation. [View source co
 A classic Minesweeper game implementation. [View source code](Examples/Minesweeper/main.cpp)
 
 ![Minesweeper Example](Minesweeper.png)
-
-## Web (WASM + WebGPU)
-
-Thirteen now has an `__EMSCRIPTEN__` backend that uses WebGPU in the browser.
-
-### Build Simple example for web
-
-```bash
-emcc Examples/Simple/main.cpp -std=c++17 -I. \
-  --use-port=emdawnwebgpu \
-  -sASYNCIFY \
-  -sALLOW_MEMORY_GROWTH=1 \
-  -o simple.html
-```
-
-Then run a local web server and open `simple.html` in a WebGPU-enabled browser.
 
 ### Notes
 - The web backend expects a `<canvas id="canvas"></canvas>` in the generated page.
@@ -251,6 +249,6 @@ bool clicked = Thirteen::GetMouseButton(0) && !Thirteen::GetMouseButtonLastFrame
 
 Alan Wolfe - API, examples and Win32/DX12 implementation
 
-Francesco Carucci - MacOS/Metal implementation
+Francesco Carucci - MacOS/Metal and WASM/WebGPU implementation
 
-Nikita Lisitsa - Linux/X11+OpenGL
+Nikita Lisitsa - Linux/X11+OpenGL implementation
