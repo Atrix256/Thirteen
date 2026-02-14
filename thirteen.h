@@ -769,7 +769,10 @@ namespace Thirteen
                         mouseY = (int)(height - p.y);
                     }
 
-                    ((void(*)(id, SEL, id))objc_msgSend)(app, Sel("sendEvent:"), event);
+                    // Forward non-keyboard events to AppKit; forwarding key events can trigger
+                    // the default macOS alert beep when no responder handles keyDown:.
+                    if (eventType != NSEventTypeKeyDown && eventType != NSEventTypeKeyUp)
+                        ((void(*)(id, SEL, id))objc_msgSend)(app, Sel("sendEvent:"), event);
                 }
 
                 if (window)
