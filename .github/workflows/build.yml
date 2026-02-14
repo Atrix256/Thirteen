@@ -1,0 +1,63 @@
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual triggering from GitHub UI
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        example: [Simple, Mandelbrot, Minesweeper]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    # Windows Build
+    - name: Setup MSBuild (Windows)
+      if: runner.os == 'Windows'
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Build with MSBuild (Windows)
+      if: runner.os == 'Windows'
+      run: msbuild Examples.sln /p:Configuration=Release /p:Platform=x64
+    
+    # macOS Build
+    - name: Build with Clang (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        clang++ -std=c++17 -O2 \
+          -framework Cocoa -framework Metal -framework QuartzCore \
+          -I. \
+          Examples/${{ matrix.example }}/main.cpp \
+          -o ${{ matrix.example }}
+    
+    # Linux Build
+    - name: Install dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libx11-dev \
+          libgl1-mesa-dev \
+          libglu1-mesa-dev
+    
+    - name: Build with GCC (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        g++ -std=c++17 -O2 \
+          -I. \
+          Examples/${{ matrix.example }}/main.cpp \
+          -lX11 -lGL -lpthread -ldl \
+          -o ${{ matrix.example }}
+    
+    - name: Build successful
+      run: echo "Build completed successfully for ${{ matrix.example }} on ${{ runner.os }}"

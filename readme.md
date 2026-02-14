@@ -1,5 +1,7 @@
 # Thirteen
 
+[![Build Status](https://github.com/Atrix256/Thirteen/actions/workflows/build.yml/badge.svg)](https://github.com/Atrix256/Thirteen/actions)
+
 **Thirteen** is a header-only C++ library that initializes a window and gives you a pointer to RGBA uint8 pixels to write to, which are copied to the screen every time you call `Render()`.
 
 It is inspired by the simplicity of the Mode 13h days where you initialized the graphics mode and then started writing pixels directly to the screen. Just include the header, initialize, and start drawing!
