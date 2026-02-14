@@ -97,7 +97,7 @@ jobs:
       run: |
         emcc -std=c++17 ${{ matrix.config == 'Debug' && '-g -O0' || '-O2' }} \
           -I. \
-          -sUSE_WEBGPU=1 \
+          --use-port=emdawnwebgpu \
           -sASYNCIFY \
           Examples/${{ matrix.example }}/main.cpp \
           -o ${{ matrix.example }}.html
