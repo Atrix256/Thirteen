@@ -65,6 +65,27 @@ A classic Minesweeper game implementation. [View source code](Examples/Minesweep
 
 ![Minesweeper Example](Minesweeper.png)
 
+## Web (WASM + WebGPU)
+
+Thirteen now has an `__EMSCRIPTEN__` backend that uses WebGPU in the browser.
+
+### Build Simple example for web
+
+```bash
+emcc Examples/Simple/main.cpp -std=c++17 -I. \
+  --use-port=emdawnwebgpu \
+  -sASYNCIFY \
+  -sALLOW_MEMORY_GROWTH=1 \
+  -o simple.html
+```
+
+Then run a local web server and open `simple.html` in a WebGPU-enabled browser.
+
+### Notes
+- The web backend expects a `<canvas id="canvas"></canvas>` in the generated page.
+- `SetFullscreen()` is currently a no-op on web.
+- Input uses browser events mapped into the same `GetKey()` / mouse APIs.
+
 ## API Reference
 
 #### `uint8* Init(uint32 width = 1024, uint32 height = 768, bool fullscreen = false)`

@@ -34,19 +34,23 @@ Nikita Lisitsa - Linux/X11+OpenGL
     #include <windows.h>
     #include <d3d12.h>
     #include <dxgi1_6.h>
-
-    #pragma comment(lib, "d3d12.lib")
-    #pragma comment(lib, "dxgi.lib")
-
-    #define DX12VALIDATION() (_DEBUG && false)
-#endif
-
-#ifdef THIRTEEN_PLATFORM_MACOS
+#elif defined(__EMSCRIPTEN__)
+    #include <emscripten/emscripten.h>
+    #include <emscripten/html5.h>
+    #include <webgpu/webgpu.h>
+#elif defined(THIRTEEN_PLATFORM_MACOS)
     #include <objc/objc.h>
     #include <objc/runtime.h>
     #include <objc/message.h>
     #include <CoreGraphics/CoreGraphics.h>
     #include <TargetConditionals.h>
+#endif
+
+#ifdef THIRTEEN_PLATFORM_WINDOWS
+    #pragma comment(lib, "d3d12.lib")
+    #pragma comment(lib, "dxgi.lib")
+
+    #define DX12VALIDATION() (_DEBUG && false)
 #endif
 
 #ifdef THIRTEEN_PLATFORM_LINUX
@@ -639,11 +643,367 @@ namespace Thirteen
                     device->Release();
             }
         };
-
-        #elif defined(THIRTEEN_PLATFORM_MACOS)
-
+        #elif defined(__EMSCRIPTEN__)
         using NativeWindowHandle = void*;
+        struct PlatformWeb
+        {
+            static constexpr const char* c_canvasSelector = "#canvas";
 
+            inline static PlatformWeb* s_instance = nullptr;
+
+            enum BrowserMouseButton : unsigned short
+            {
+                BrowserMouseButtonLeft = 0,
+                BrowserMouseButtonMiddle = 1,
+                BrowserMouseButtonRight = 2
+            };
+
+            enum ThirteenMouseButton : int
+            {
+                ThirteenMouseButtonLeft = 0,
+                ThirteenMouseButtonRight = 1,
+                ThirteenMouseButtonMiddle = 2,
+                ThirteenMouseButtonInvalid = -1
+            };
+
+            static int MapMouseButton(unsigned short button)
+            {
+                // Browser buttons: 0=left, 1=middle, 2=right.
+                if (button == BrowserMouseButtonLeft)
+                    return ThirteenMouseButtonLeft;
+                if (button == BrowserMouseButtonRight)
+                    return ThirteenMouseButtonRight;
+                if (button == BrowserMouseButtonMiddle)
+                    return ThirteenMouseButtonMiddle;
+                return ThirteenMouseButtonInvalid;
+            }
+
+            static void UpdateKeyState(const EmscriptenKeyboardEvent* keyEvent, bool isDown)
+            {
+                if (!keyEvent)
+                    return;
+
+                if (keyEvent->keyCode >= 0 && keyEvent->keyCode < 256)
+                    keys[keyEvent->keyCode] = isDown;
+
+                if (keyEvent->key[0] != '\0' && keyEvent->key[1] == '\0')
+                    keys[(unsigned char)keyEvent->key[0]] = isDown;
+
+                if (std::strcmp(keyEvent->key, "Escape") == 0)
+                    keys[VK_ESCAPE] = isDown;
+                if (std::strcmp(keyEvent->key, " ") == 0 || std::strcmp(keyEvent->key, "Spacebar") == 0 || std::strcmp(keyEvent->code, "Space") == 0)
+                    keys[VK_SPACE] = isDown;
+            }
+
+            static EM_BOOL OnKeyDown(int, const EmscriptenKeyboardEvent* keyEvent, void*)
+            {
+                UpdateKeyState(keyEvent, true);
+                return EM_TRUE;
+            }
+
+            static EM_BOOL OnKeyUp(int, const EmscriptenKeyboardEvent* keyEvent, void*)
+            {
+                UpdateKeyState(keyEvent, false);
+                return EM_TRUE;
+            }
+
+            static EM_BOOL OnMouseDown(int, const EmscriptenMouseEvent* mouseEvent, void*)
+            {
+                if (!mouseEvent)
+                    return EM_FALSE;
+                int button = MapMouseButton(mouseEvent->button);
+                if (button >= 0 && button < 3)
+                    mouseButtons[button] = true;
+                mouseX = mouseEvent->targetX;
+                mouseY = mouseEvent->targetY;
+                return EM_TRUE;
+            }
+
+            static EM_BOOL OnMouseUp(int, const EmscriptenMouseEvent* mouseEvent, void*)
+            {
+                if (!mouseEvent)
+                    return EM_FALSE;
+                int button = MapMouseButton(mouseEvent->button);
+                if (button >= 0 && button < 3)
+                    mouseButtons[button] = false;
+                mouseX = mouseEvent->targetX;
+                mouseY = mouseEvent->targetY;
+                return EM_TRUE;
+            }
+
+            static EM_BOOL OnMouseMove(int, const EmscriptenMouseEvent* mouseEvent, void*)
+            {
+                if (!mouseEvent)
+                    return EM_FALSE;
+                mouseX = mouseEvent->targetX;
+                mouseY = mouseEvent->targetY;
+                return EM_TRUE;
+            }
+
+            static EM_BOOL OnCanvasResize(int, const EmscriptenUiEvent*, void*)
+            {
+                if (!s_instance)
+                    return EM_FALSE;
+                int canvasWidth = 0;
+                int canvasHeight = 0;
+                if (emscripten_get_canvas_element_size(c_canvasSelector, &canvasWidth, &canvasHeight) == EMSCRIPTEN_RESULT_SUCCESS)
+                {
+                    if (canvasWidth > 0 && canvasHeight > 0 && ((uint32)canvasWidth != width || (uint32)canvasHeight != height))
+                        SetSize((uint32)canvasWidth, (uint32)canvasHeight);
+                }
+                return EM_TRUE;
+            }
+
+            bool InitWindow(uint32 width, uint32 height)
+            {
+                s_instance = this;
+
+                if (emscripten_set_canvas_element_size(c_canvasSelector, (int)width, (int)height) != EMSCRIPTEN_RESULT_SUCCESS)
+                    return false;
+
+                emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, true, OnKeyDown);
+                emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, true, OnKeyUp);
+                emscripten_set_mousedown_callback(c_canvasSelector, nullptr, true, OnMouseDown);
+                emscripten_set_mouseup_callback(c_canvasSelector, nullptr, true, OnMouseUp);
+                emscripten_set_mousemove_callback(c_canvasSelector, nullptr, true, OnMouseMove);
+                emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, false, OnCanvasResize);
+                return true;
+            }
+
+            void PumpMessages() {}
+
+            void SetTitle(const char* title)
+            {
+                emscripten_set_window_title(title ? title : "");
+            }
+
+            void SetFullscreen(bool, uint32, uint32) {}
+
+            void ResizeWindow(uint32 width, uint32 height, bool)
+            {
+                emscripten_set_canvas_element_size(c_canvasSelector, (int)width, (int)height);
+            }
+
+            NativeWindowHandle GetWindowHandle() const { return nullptr; }
+
+            void ShutdownWindow()
+            {
+                emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, true, nullptr);
+                emscripten_set_keyup_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, true, nullptr);
+                emscripten_set_mousedown_callback(c_canvasSelector, nullptr, true, nullptr);
+                emscripten_set_mouseup_callback(c_canvasSelector, nullptr, true, nullptr);
+                emscripten_set_mousemove_callback(c_canvasSelector, nullptr, true, nullptr);
+                emscripten_set_resize_callback(EMSCRIPTEN_EVENT_TARGET_WINDOW, nullptr, false, nullptr);
+                s_instance = nullptr;
+            }
+        };
+
+        struct RendererWebGPU
+        {
+            WGPUDevice device = nullptr;
+            WGPUAdapter adapter = nullptr;
+            WGPUQueue queue = nullptr;
+            WGPUInstance instance = nullptr;
+            WGPUSurface surface = nullptr;
+            WGPUTextureFormat surfaceFormat = WGPUTextureFormat_BGRA8Unorm;
+            uint32 configuredWidth = 0;
+            uint32 configuredHeight = 0;
+            bool adapterRequestPending = false;
+            bool deviceRequestPending = false;
+            bool requestFailed = false;
+
+            static void OnRequestDevice(WGPURequestDeviceStatus status, WGPUDevice requestedDevice, WGPUStringView, void* userdata1, void*)
+            {
+                RendererWebGPU* self = (RendererWebGPU*)userdata1;
+                if (!self)
+                    return;
+
+                self->deviceRequestPending = false;
+                if (status != WGPURequestDeviceStatus_Success || !requestedDevice)
+                {
+                    self->requestFailed = true;
+                    return;
+                }
+
+                self->device = requestedDevice;
+                self->queue = wgpuDeviceGetQueue(self->device);
+                if (!self->queue)
+                {
+                    self->requestFailed = true;
+                    return;
+                }
+
+                if (!self->ConfigureSurface(self->configuredWidth, self->configuredHeight))
+                    self->requestFailed = true;
+            }
+
+            static void OnRequestAdapter(WGPURequestAdapterStatus status, WGPUAdapter requestedAdapter, WGPUStringView, void* userdata1, void*)
+            {
+                RendererWebGPU* self = (RendererWebGPU*)userdata1;
+                if (!self)
+                    return;
+
+                self->adapterRequestPending = false;
+                if (status != WGPURequestAdapterStatus_Success || !requestedAdapter)
+                {
+                    self->requestFailed = true;
+                    return;
+                }
+
+                self->adapter = requestedAdapter;
+
+                WGPURequestDeviceCallbackInfo callbackInfo = {};
+                callbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+                callbackInfo.callback = OnRequestDevice;
+                callbackInfo.userdata1 = self;
+
+                WGPUDeviceDescriptor deviceDesc = {};
+                wgpuAdapterRequestDevice(self->adapter, &deviceDesc, callbackInfo);
+                self->deviceRequestPending = true;
+            }
+
+            bool ConfigureSurface(uint32 width, uint32 height)
+            {
+                if (!surface || !device || width == 0 || height == 0)
+                    return false;
+
+                WGPUSurfaceConfiguration config = {};
+                config.device = device;
+                config.format = surfaceFormat;
+                config.usage = WGPUTextureUsage_CopyDst | WGPUTextureUsage_RenderAttachment;
+                config.alphaMode = WGPUCompositeAlphaMode_Auto;
+                config.width = width;
+                config.height = height;
+                config.presentMode = WGPUPresentMode_Fifo;
+                wgpuSurfaceConfigure(surface, &config);
+
+                configuredWidth = width;
+                configuredHeight = height;
+                return true;
+            }
+
+            bool Init(NativeWindowHandle, uint32 width, uint32 height)
+            {
+                WGPUInstanceDescriptor instanceDesc = {};
+                instance = wgpuCreateInstance(&instanceDesc);
+                if (!instance)
+                    return false;
+
+                WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvasDesc = {};
+                canvasDesc.chain.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
+                canvasDesc.selector.data = PlatformWeb::c_canvasSelector;
+                canvasDesc.selector.length = WGPU_STRLEN;
+
+                WGPUSurfaceDescriptor surfaceDesc = {};
+                surfaceDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
+                surface = wgpuInstanceCreateSurface(instance, &surfaceDesc);
+                if (!surface)
+                    return false;
+
+                configuredWidth = width;
+                configuredHeight = height;
+
+                WGPURequestAdapterOptions options = {};
+                options.compatibleSurface = surface;
+
+                WGPURequestAdapterCallbackInfo callbackInfo = {};
+                callbackInfo.mode = WGPUCallbackMode_AllowProcessEvents;
+                callbackInfo.callback = OnRequestAdapter;
+                callbackInfo.userdata1 = this;
+
+                wgpuInstanceRequestAdapter(instance, &options, callbackInfo);
+                adapterRequestPending = true;
+                deviceRequestPending = false;
+                requestFailed = false;
+                return true;
+            }
+
+            bool Render(const uint8* pixels, uint32 width, uint32 height, bool)
+            {
+                if (!pixels || !surface)
+                    return false;
+
+                if (!device)
+                {
+                    if (instance && (adapterRequestPending || deviceRequestPending))
+                        wgpuInstanceProcessEvents(instance);
+                    if (requestFailed)
+                        return false;
+                    if (!device || !queue)
+                        return true;
+                }
+
+                if (width != configuredWidth || height != configuredHeight)
+                {
+                    if (!ConfigureSurface(width, height))
+                        return false;
+                }
+
+                WGPUSurfaceTexture surfaceTexture = {};
+                wgpuSurfaceGetCurrentTexture(surface, &surfaceTexture);
+
+                const bool surfaceOk =
+                    surfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal ||
+                    surfaceTexture.status == WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal;
+                if (!surfaceOk || !surfaceTexture.texture)
+                {
+                    if (!ConfigureSurface(width, height))
+                        return false;
+                    return true;
+                }
+
+                WGPUTexelCopyTextureInfo dst = {};
+                dst.texture = surfaceTexture.texture;
+                dst.mipLevel = 0;
+                dst.origin = { 0, 0, 0 };
+                dst.aspect = WGPUTextureAspect_All;
+
+                WGPUTexelCopyBufferLayout layout = {};
+                layout.offset = 0;
+                layout.bytesPerRow = width * 4u;
+                layout.rowsPerImage = height;
+
+                WGPUExtent3D writeSize = { width, height, 1 };
+                wgpuQueueWriteTexture(queue, &dst, pixels, (size_t)width * (size_t)height * 4u, &layout, &writeSize);
+
+                wgpuSurfacePresent(surface);
+                wgpuTextureRelease(surfaceTexture.texture);
+                return true;
+            }
+
+            bool Resize(uint32 width, uint32 height)
+            {
+                return ConfigureSurface(width, height);
+            }
+
+            void Shutdown()
+            {
+                if (surface)
+                {
+                    wgpuSurfaceRelease(surface);
+                    surface = nullptr;
+                }
+                if (adapter)
+                {
+                    wgpuAdapterRelease(adapter);
+                    adapter = nullptr;
+                }
+                if (instance)
+                {
+                    wgpuInstanceRelease(instance);
+                    instance = nullptr;
+                }
+                queue = nullptr;
+                device = nullptr;
+                configuredWidth = 0;
+                configuredHeight = 0;
+                adapterRequestPending = false;
+                deviceRequestPending = false;
+                requestFailed = false;
+            }
+        };
+        #elif defined(THIRTEEN_PLATFORM_MACOS)
+        using NativeWindowHandle = void*;
         extern "C" void* MTLCreateSystemDefaultDevice(void);
 
         using NSUInteger = unsigned long;
@@ -1410,6 +1770,9 @@ namespace Thirteen
             #if defined(THIRTEEN_PLATFORM_WINDOWS)
             using Platform = PlatformWin32;
             using Renderer = RendererD3D12;
+            #elif defined(__EMSCRIPTEN__)
+            using Platform = PlatformWeb;
+            using Renderer = RendererWebGPU;
             #elif defined(THIRTEEN_PLATFORM_MACOS)
             using Platform = PlatformMetal;
             using Renderer = RendererMetal;
@@ -1611,6 +1974,11 @@ namespace Thirteen
         if (!renderer)
             return false;
         renderer->Render(Internal::Pixels, width, height, vsyncEnabled);
+        #if defined(__EMSCRIPTEN__)
+            // Browser builds need to yield so JS promises/events (including WebGPU
+            // async setup and canvas presentation) can progress each frame.
+            emscripten_sleep(0);
+        #endif
         return !shouldQuit;
     }
 
