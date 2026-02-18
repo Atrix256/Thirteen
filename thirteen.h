@@ -89,6 +89,16 @@ namespace Thirteen
     using uint8 = unsigned char;
     using uint32 = unsigned int;
 
+#if defined(THIRTEEN_PLATFORM_WINDOWS)
+    using NativeWindowHandle = HWND;
+#elif defined(THIRTEEN_PLATFORM_WEB)
+    using NativeWindowHandle = void*;
+#elif defined(THIRTEEN_PLATFORM_MACOS)
+    using NativeWindowHandle = void*;
+#elif defined(THIRTEEN_PLATFORM_LINUX)
+    using NativeWindowHandle = int;
+#endif
+
     // ========== Function Prototypes ==========
 
     // Initializes window and DX12. Returns a pointer to the pixel buffer on success, or nullptr on failure.
@@ -120,6 +130,9 @@ namespace Thirteen
 
     // Returns the current height of the rendering surface in pixels.
     [[nodiscard]] uint32 GetHeight();
+
+    // Returns the platform-specific window handle.
+    [[nodiscard]] NativeWindowHandle GetWindowHandle();
 
     // Sets the size of the rendering surface. Recreates internal buffers. Returns the new pixel buffer pointer on success, or nullptr on failure. The returned pointer may differ from the one returned by Init().
     [[nodiscard]] uint8* SetSize(uint32 width, uint32 height);
@@ -190,8 +203,6 @@ namespace Thirteen
         uint8* Pixels = nullptr;
 
         #if defined(THIRTEEN_PLATFORM_WINDOWS)
-
-        using NativeWindowHandle = HWND;
 
         struct PlatformWin32
         {
@@ -646,7 +657,7 @@ namespace Thirteen
             }
         };
         #elif defined(__EMSCRIPTEN__)
-        using NativeWindowHandle = void*;
+        
         struct PlatformWeb
         {
             static constexpr const char* c_canvasSelector = "#canvas";
@@ -1200,7 +1211,7 @@ namespace Thirteen
             }
         };
         #elif defined(THIRTEEN_PLATFORM_MACOS)
-        using NativeWindowHandle = void*;
+        
         extern "C" void* MTLCreateSystemDefaultDevice(void);
 
         using NSUInteger = unsigned long;
@@ -1570,8 +1581,6 @@ namespace Thirteen
         };
 
         #elif defined(THIRTEEN_PLATFORM_LINUX)
-
-        using NativeWindowHandle = int;
 
         struct PlatformLinuxX11GL
         {
@@ -2218,6 +2227,11 @@ namespace Thirteen
     uint32 GetHeight()
     {
         return Internal::height;
+    }
+
+    NativeWindowHandle GetWindowHandle()
+    {
+        return Internal::platform->GetWindowHandle();
     }
 
     uint8* SetSize(uint32 width, uint32 height)
