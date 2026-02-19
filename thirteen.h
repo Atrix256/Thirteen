@@ -51,6 +51,7 @@ Nikita Lisitsa - Linux/X11+OpenGL implementation
 #ifdef THIRTEEN_PLATFORM_WINDOWS
     #pragma comment(lib, "d3d12.lib")
     #pragma comment(lib, "dxgi.lib")
+    #pragma comment(lib, "user32.lib")
 
     #define DX12VALIDATION() (_DEBUG && false)
 #endif
