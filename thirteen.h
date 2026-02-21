@@ -1588,6 +1588,7 @@ namespace Thirteen
             int (*XStoreName)(Display*, Window, const char*) = nullptr;
             int (*XPending)(Display*) = nullptr;
             int (*XNextEvent)(Display*, XEvent*) = nullptr;
+            int (*XLookupString)(XKeyEvent *, char *, int, KeySym *, XComposeStatus *);
             int (*XDestroyWindow)(Display*, Window) = nullptr;
             int (*XCloseDisplay)(Display*) = nullptr;
             XSizeHints* (*XAllocSizeHints)() = nullptr;
@@ -1655,6 +1656,10 @@ namespace Thirteen
 
                 XNextEvent = (int(*)(Display*,XEvent*)) dlsym(x11Library, "XNextEvent");
                 if (!XNextEvent)
+                    return false;
+
+                XLookupString = (int(*)(XKeyEvent *, char *, int, KeySym *, XComposeStatus *)) dlsym(x11Library, "XLookupString");
+                if (!XLookupString)
                     return false;
 
                 XDestroyWindow = (int(*)(Display*,Window)) dlsym(x11Library, "XDestroyWindow");
@@ -1833,6 +1838,20 @@ namespace Thirteen
                 }
             }
 
+            int remapKeyEvent(XKeyEvent &event)
+            {
+                KeySym keysym = 0;
+                char buf[8] = {};
+                int rc = XLookupString(&event, buf, sizeof(buf), &keysym, NULL);
+
+                // rc == number of characters wruitten to `buf`.  We expect
+                // exactly 1 for ASCII characters.
+                if (rc != 1)
+                    return -1;
+
+                return buf[0];
+            }
+
             void PumpMessages()
             {
                 XEvent event;
@@ -1841,14 +1860,17 @@ namespace Thirteen
                     XNextEvent(x11Display, &event);
                     switch (event.type)
                     {
-                    // TODO: these are hardware-dependent, need to unify key codes across platforms
                     case KeyPress:
-                        // if (event.xkey.keycode < 256)
-                        //     keys[event.xkey.keycode] = true;
+                        if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
+                        {
+                            keys[keycode] = true;
+                        }
                         break;
                     case KeyRelease:
-                        // if (event.xkey.keycode < 256)
-                        //     keys[event.xkey.keycode] = true;
+                        if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
+                        {
+                            keys[keycode] = false;
+                        }
                         break;
                     case ButtonPress:
                         mouseButtons[remapMouseButton(event.xbutton.button)] = true;
