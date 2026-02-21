@@ -1861,7 +1861,7 @@ namespace Thirteen
                         mouseY = event.xmotion.y;
                         break;
                     case ClientMessage:
-                        if (event.xclient.data.l[0] == closeWindowAtom)
+                        if ((Atom)event.xclient.data.l[0] == closeWindowAtom)
                             shouldQuit = true;
                         break;
                     }
