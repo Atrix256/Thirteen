@@ -49,7 +49,7 @@ int main()
 How to build examples:
 * **Windows**: build Examples.sln
 * **Mac**: For each example: clang++ main.cpp -framework Metal -framework Cocoa -std=c++11 -DTARGET_OS_OSX
-* **Linux**: For each example: g++ main.cpp -o Simple
+* **Linux**: For each example: g++ main.cpp -o Simple (needs `libX11-devel mesa-libGL-devel` on RPM-based distros)
 
 **Web**:
 
