@@ -11,6 +11,8 @@ Alan Wolfe - API, examples and Win32/DX12 implementation
 Francesco Carucci - MacOS/Metal and WASM/WebGPU implementation
 
 Nikita Lisitsa - Linux/X11+OpenGL implementation
+
+Chris Cascioli - GetWindowHandle() and warning cleanup
 */
 
 #pragma once
@@ -2264,10 +2266,11 @@ namespace Thirteen
         if (width == Internal::width && height == Internal::height)
             return Pixels;
 
-        // Reallocate pixel buffer
-        Pixels = (uint8*)realloc(Pixels, width * height * 4);
-        if (!Pixels)
+        // Reallocate pixel buffer (checking temp result before Pixels assignment silences warning)
+        uint8* reallocResult = (uint8*)realloc(Pixels, width * height * 4);
+        if (!reallocResult)
             return nullptr;
+        Pixels = reallocResult;
 
         // Update dimensions
         Internal::width = width;
