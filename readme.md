@@ -248,5 +248,7 @@ Francesco Carucci - MacOS/Metal and WASM/WebGPU implementation
 
 Nikita Lisitsa - Linux/X11+OpenGL implementation
 
+Chris Cascioli - GetWindowHandle() and warning cleanup
+
 Any contribution to this library earns you a spot in the credits, so feel free to add your name to this list as part of any submitted PR. Also add your name to the top of thirteen.h so the two places stay synchronized.
 Thank you for your contributions!
