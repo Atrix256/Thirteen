@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS // for STB
 
+#define THIRTEEN_IMPLEMENTATION
 #include "../../thirteen.h"
 
 #include <stdio.h>
