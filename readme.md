@@ -15,6 +15,7 @@ Platforms Supported:
 ## Usage
 
 ```cpp
+#define THIRTEEN_IMPLEMENTATION // This define must be set in one cpp file to create the implementation.
 #include "thirteen.h"
 
 int main()
