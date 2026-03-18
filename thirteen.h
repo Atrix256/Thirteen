@@ -164,7 +164,7 @@ namespace Thirteen
 }
 
 // ========== Implementation ==========
-
+#ifdef THIRTEEN_IMPLEMENTATION
 namespace Thirteen
 {
 
@@ -2351,3 +2351,4 @@ namespace Thirteen
         Internal::Pixels = nullptr;
     }
 }
+#endif // THIRTEEN_IMPLEMENTATION
