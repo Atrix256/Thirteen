@@ -61,11 +61,27 @@ Chris Cascioli - GetWindowHandle() and warning cleanup
 #endif
 
 #ifdef THIRTEEN_PLATFORM_LINUX
+    #include <stdio.h>
+    #include <stdint.h>
+    #include <linux/input.h>
+    #include <poll.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+
     #include <dlfcn.h>
     #include <X11/Xlib.h>
     #include <GL/gl.h>
     #include <GL/glx.h>
     #include <GL/glext.h>
+
+    // https://www.kernel.org/pub/linux/utils/kernel/hotplug/libudev/ch01.html
+    // https://www.kernel.org/pub/linux/utils/kernel/hotplug/libudev/libudev-udev.html
+    // Forward declare
+    typedef struct udev            udev;
+    typedef struct udev_enumerate  udev_enumerate;
+    typedef struct udev_list_entry udev_list_entry;
+    typedef struct udev_device     udev_device;
+    typedef struct udev_monitor    udev_monitor;
 #endif
 
 // ========== Common Includes ==========
@@ -1727,7 +1743,35 @@ namespace Thirteen
             void (*glBlitFramebuffer)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum) = nullptr;
 
             GLuint texture = 0;
+            
             GLuint framebuffer = 0;
+            
+            udev *(*udev_new)(void) = nullptr;
+            void (*udev_unref)(udev *) = nullptr;
+            
+            udev_monitor *(*udev_monitor_new_from_netlink)(udev *, const char *) = nullptr;
+            udev_monitor *(*udev_monitor_ref)(udev_monitor *) = nullptr;
+            udev_monitor *(*udev_monitor_unref)(udev_monitor *) = nullptr;
+            
+            udev_enumerate *(*udev_enumerate_new)(udev *) = nullptr;
+            int (*udev_enumerate_add_match_subsystem)(udev_enumerate *, const char *) = nullptr;
+            int (*udev_enumerate_add_match_property)(udev_enumerate *, const char *, const char *) = nullptr;
+            int (*udev_enumerate_scan_devices)(udev_enumerate *) = nullptr;
+            udev_list_entry *(*udev_enumerate_get_list_entry)(udev_enumerate *) = nullptr;
+            void  (*udev_enumerate_unref)(udev_enumerate *) = nullptr;
+ 
+            udev_list_entry *(*udev_list_entry_get_next)(udev_list_entry *) = nullptr;
+            const char *(*udev_list_entry_get_name)(udev_list_entry *) = nullptr;
+ 
+            udev_device *(*udev_device_new_from_syspath)(udev *, const char *) = nullptr;
+            const char *(*udev_device_get_devnode)(udev_device *) = nullptr;
+            const char *(*udev_device_get_property_value)(udev_device *, const char *) = nullptr;
+            void (*udev_device_unref)(udev_device *) = nullptr;
+
+            void * libudevLibrary = nullptr;
+
+            int gamepadFd[1];
+            bool foundGamepads = false;
 
             bool InitWindow(uint32 width, uint32 height)
             {
@@ -1940,9 +1984,143 @@ namespace Thirteen
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
                 glFramebufferTexture(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0);
 
+
+#if 1
+                
+                libudevLibrary = dlopen("libudev.so.1", RTLD_LAZY | RTLD_LOCAL);
+                if (!libudevLibrary)
+                {
+                    libudevLibrary =  dlopen("libudev.so", RTLD_LAZY | RTLD_LOCAL);
+                }
+
+                if (!libudevLibrary)
+                {
+                    return false;
+                }
+
+                udev_new = (udev*(*)()) dlsym(libudevLibrary, "udev_new");
+                udev_unref = (void(*)(udev *)) dlsym(libudevLibrary, "udev_unref");
+                
+                udev_monitor_new_from_netlink = (udev_monitor*(*)(udev *, const char *)) dlsym(libudevLibrary, "udev_monitor_new_from_netlink");
+                udev_monitor_ref = (udev_monitor*(*)(udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_ref");
+                udev_monitor_unref = (udev_monitor*(*)(udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_unref");
+                
+                udev_enumerate_new = (udev_enumerate*(*)(udev *)) dlsym(libudevLibrary, "udev_enumerate_new");
+                udev_enumerate_add_match_subsystem = (int(*)(udev_enumerate *, const char *)) dlsym(libudevLibrary, "udev_enumerate_add_match_subsystem");
+                
+                udev_enumerate_add_match_property = (int(*)(udev_enumerate *, const char *, const char *)) dlsym(libudevLibrary, "udev_enumerate_add_match_property");
+                udev_enumerate_scan_devices = (int(*)(udev_enumerate *)) dlsym(libudevLibrary, "udev_enumerate_scan_devices");
+                udev_enumerate_get_list_entry = (udev_list_entry*(*)(udev_enumerate *)) dlsym(libudevLibrary, "udev_enumerate_get_list_entry");
+                udev_enumerate_unref = (void(*)(udev_enumerate *)) dlsym(libudevLibrary, "udev_enumerate_unref");
+                
+                udev_list_entry_get_next = (udev_list_entry*(*)(udev_list_entry *)) dlsym(libudevLibrary, "udev_list_entry_get_next");
+                udev_list_entry_get_name= (const char*(*)(udev_list_entry *)) dlsym(libudevLibrary, "udev_list_entry_get_name");
+                
+                udev_device_new_from_syspath= (udev_device*(*)(udev *, const char *)) dlsym(libudevLibrary, "udev_device_new_from_syspath");
+                udev_device_get_devnode = (const char*(*)(udev_device *)) dlsym(libudevLibrary, "udev_device_get_devnode");
+                udev_device_get_property_value = (const char*(*)(udev_device *, const char *)) dlsym(libudevLibrary, "udev_device_get_property_value");
+                
+                udev_device_unref = (void(*)(udev_device *)) dlsym(libudevLibrary, "udev_device_unref");
+                
+                //  = (int(*)()) dlsym(libudevLibrary, "");
+
+                udev* udevCtx = udev_new();
+                if (udevCtx)
+                {
+                    // TODO: Monitor hotplugged input
+                    //udev_monitor *udevMonitor = udev_monitor_new_from_netlink(udevCtx, "input");
+                    //udev_monitor_enable_receiving(udevMonitor);
+
+                    // Initial scan
+                    udev_enumerate* udevEnumerator = udev_enumerate_new(udevCtx);
+                    udev_device *potentialGamepadDevice = nullptr;
+
+                    if (udevEnumerator)
+                    {
+                        udev_enumerate_add_match_subsystem(udevEnumerator, "input");
+
+                        udev_enumerate_add_match_property(udevEnumerator, "ID_INPUT_JOYSTICK", "1");
+
+                        udev_enumerate_scan_devices(udevEnumerator);
+                        udev_list_entry* deviceList = udev_enumerate_get_list_entry(udevEnumerator);
+
+                        udev_list_entry* element = deviceList;
+                        int i = 1;
+                        for (; element; element = udev_list_entry_get_next(element))
+                        {
+                            printf("\ni = %d\n", i++);
+                            const char* devicePath = udev_list_entry_get_name(element);
+                            udev_device *device = udev_device_new_from_syspath(udevCtx, devicePath);
+                            const char* devNode = udev_device_get_devnode(device);
+
+                            if (device)
+                            {
+                                
+                                if (devicePath && devNode)
+                                {
+                                   printf("Device information:\n");
+                                   printf("devicePath = %s\ndevNode = %s\n", devicePath, devNode);
+
+                                   int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
+                                   if (possibleGamepadFd)
+                                   {
+                                       // User needs to be in the "input" group for this to work
+                                       // For more info on ioctl and the EVIOC macros
+                                       // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
+                                       
+                                       // Query for info and capabilities
+                                       struct input_id devId;
+                                       ioctl(possibleGamepadFd, EVIOCGID, &devId);
+                                       char name[256] = {0};
+                                       ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
+
+                                       printf("Device: %s (vendor=%04x product=%04x)\n", name, devId.vendor, devId.product);
+
+                                       // Interrogate the potential gamepad
+
+                                       // We're working with bit arrays when using EVIOCGBIT
+
+                                       unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};                                       
+                                       if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
+                                       {
+                                           printf("hm..\n");
+                                           unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
+                                           bool isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
+                                           if (isGamepad)
+                                           {
+                                               foundGamepads = true;
+                                               gamepadFd[0] = possibleGamepadFd;
+                                               udev_device_unref(device);
+                                               break;
+                                           }
+                                       }
+
+                                       close(possibleGamepadFd);
+                                   }
+                                }
+
+
+
+                                potentialGamepadDevice = device;
+                                udev_device_unref(device); // Will leak memory otherwise!
+                            }
+                        }
+                        
+                    }
+
+                    udev_enumerate_unref(udevEnumerator);
+
+                }
+#endif
+
+                if (foundGamepads)
+                {
+                    printf("Found at least one gamepad!\n");
+                }
+                
                 return true;
             }
-
+            
             int remapMouseButton(int x11Button)
             {
                 switch (x11Button)
@@ -2004,6 +2182,7 @@ namespace Thirteen
                         break;
                     }
                 }
+                
             }
 
             void SetTitle(const char* title)
@@ -2060,11 +2239,163 @@ namespace Thirteen
             bool Init(PlatformLinuxX11GL * platform, uint32, uint32)
             {
                 this->platform = platform;
+
                 return true;
             }
 
             bool Render(const uint8* pixels, uint32, uint32, bool)
             {
+                for (int controllerIndex = 0; platform->foundGamepads && (controllerIndex < 1); ++controllerIndex)
+                {
+                    // Future reference: evdev is event-based, unlike the state-based win32 XInput. Therefore, do no zero current state.
+                    //controllers[controllerIndex] = ControllerState{};
+
+                    ControllerState* controller = &controllers[controllerIndex];
+                    
+                    struct input_event events[32];
+
+                    struct pollfd pollFd;
+                    pollFd.fd = platform->gamepadFd[controllerIndex];
+                    pollFd.events = POLLIN;
+                    pollFd.revents = 0;
+
+                    if (poll(&pollFd, 1, 0) > 0)
+                    {
+                        int bytesRead = read(platform->gamepadFd[controllerIndex], &events, sizeof(events));
+                        if(bytesRead > 0)
+                        {
+                            int eventCount = bytesRead / sizeof(struct input_event);
+                            for (int eventIndex = 0; eventIndex < eventCount; eventIndex++)
+                            {
+                                struct input_event* event = &events[eventIndex];
+                                if (event->type == EV_KEY)
+                                {
+                                    bool pressed = event->value == 1;
+                                    bool released = event->value == 0;
+                                    bool autoRepeat = event->value == 2;
+                                    
+                                    if(event->code == BTN_SOUTH)
+                                        pressed ? controller->buttons |= ControllerButton::A : controller->buttons &= ~ControllerButton::A;
+                                    else if(event->code == BTN_EAST)
+                                        pressed ? controller->buttons |= ControllerButton::B : controller->buttons &= ~ControllerButton::B;
+                                    else if(event->code == BTN_WEST)
+                                        pressed ? controller->buttons |= ControllerButton::X : controller->buttons &= ~ControllerButton::X;
+                                    else if(event->code == BTN_NORTH)
+                                        pressed ? controller->buttons |= ControllerButton::Y : controller->buttons &= ~ControllerButton::Y;
+
+                                    else if(event->code == BTN_DPAD_RIGHT)
+                                        pressed ? controller->buttons |= ControllerButton::DPadRight : controller->buttons &= ~ControllerButton::DPadRight;
+                                    else if(event->code == BTN_DPAD_DOWN)
+                                        pressed ? controller->buttons |= ControllerButton::DPadDown : controller->buttons &= ~ControllerButton::DPadDown;
+                                    else if(event->code == BTN_DPAD_LEFT)
+                                        pressed ? controller->buttons |= ControllerButton::DPadLeft : controller->buttons &= ~ControllerButton::DPadLeft;
+                                    else if(event->code == BTN_DPAD_UP)
+                                        pressed ? controller->buttons |= ControllerButton::DPadUp : controller->buttons &= ~ControllerButton::DPadUp;
+                                    
+                                    else if(event->code == BTN_THUMBL)
+                                        pressed ? controller->buttons |= ControllerButton::LeftThumb : controller->buttons &= ~ControllerButton::LeftThumb;
+                                    else if(event->code == BTN_THUMBR)
+                                        pressed ? controller->buttons |= ControllerButton::RightThumb : controller->buttons &= ~ControllerButton::RightThumb;
+
+                                }
+                                else if (event->type == EV_ABS)
+                                {
+                                    // TODO: Read axis values
+
+                                    // For some controllers, DPAD will come through ABS_HAT codes
+                                    if (event->code == ABS_HAT0X)
+                                    {
+                                        if (event->value == 1)
+                                            controller->buttons |= ControllerButton::DPadRight;
+                                        else if (event->value == -1)
+                                            controller->buttons |= ControllerButton::DPadLeft;
+                                        else if (event->value == 0) // left/right was released
+                                            controllers->buttons &= ~(ControllerButton::DPadRight | ControllerButton::DPadLeft);
+                                    }
+                                    else if (event->code == ABS_HAT0Y)
+                                    {
+                                        if (event->value == 1)
+                                            controller->buttons |= ControllerButton::DPadDown;
+                                        else if (event->value == -1)
+                                            controller->buttons |= ControllerButton::DPadUp;
+                                        else if (event->value == 0) // up/down was released
+                                            controllers->buttons &= ~(ControllerButton::DPadUp | ControllerButton::DPadDown);
+                                    }
+                                    
+                                    if (event->code == ABS_X)
+                                    {
+                                        // X values of the left stick
+                                        struct input_absinfo absInfo;
+                                        ioctl(pollFd.fd, EVIOCGABS(ABS_X), &absInfo);
+                                        //printf("absinfo of ABS_X:\n");
+                                        //printf("value = %d\nmin = %d\nmax = %d\nfuzz = %d\nflat = %d\nresolution = %d\n", absInfo.value, absInfo.minimum, absInfo.maximum, absInfo.fuzz, absInfo.flat, absInfo.resolution);
+                                        //printf("val = %d\n", event->value);
+
+                                        // Map an arbitrary range [absInfo.minimum, absInfo.maximum] to [-1, 1]
+                                        // by first normalizing to [0, 1] then scale it to [-1, 1]
+
+                                        controller->leftThumbX = (float)(event->value - absInfo.minimum) / (float)(absInfo.maximum - absInfo.minimum);
+                                        controller->leftThumbX = controller->leftThumbX*2 - 1;
+
+                                        // deadzone
+                                        int centerX = (absInfo.maximum + absInfo.minimum) / 2;
+
+                                    }
+                                    else if (event->code == ABS_Y)
+                                    {
+                                        // Y values of the left stick
+                                        struct input_absinfo absInfo;
+                                        ioctl(pollFd.fd, EVIOCGABS(ABS_Y), &absInfo);
+
+                                        controller->leftThumbY = (float)(event->value - absInfo.minimum) / (float)(absInfo.maximum - absInfo.minimum);
+                                        controller->leftThumbY = controller->leftThumbY*2 - 1;
+
+                                        int centerY = (absInfo.maximum + absInfo.minimum) / 2;
+                                        
+                                    }
+                                    else if (event->code == ABS_RX)
+                                    {
+                                        // X values of the left stick
+                                        struct input_absinfo absInfo;
+                                        ioctl(pollFd.fd, EVIOCGABS(ABS_X), &absInfo);
+                                        //printf("absinfo of ABS_X:\n");
+                                        //printf("value = %d\nmin = %d\nmax = %d\nfuzz = %d\nflat = %d\nresolution = %d\n", absInfo.value, absInfo.minimum, absInfo.maximum, absInfo.fuzz, absInfo.flat, absInfo.resolution);
+                                        //printf("val = %d\n", event->value);
+
+                                        // Map an arbitrary range [absInfo.minimum, absInfo.maximum] to [-1, 1]
+                                        // by first normalizing to [0, 1] then scale it to [-1, 1]
+
+                                        controller->rightThumbX = (float)(event->value - absInfo.minimum) / (float)(absInfo.maximum - absInfo.minimum);
+                                        controller->rightThumbX = controller->rightThumbX*2 - 1;
+                                        // deadzone
+                                        int centerX = (absInfo.maximum + absInfo.minimum) / 2;
+
+                                    }
+                                    else if (event->code == ABS_RY)
+                                    {
+                                        // Y values of the left stick
+                                        struct input_absinfo absInfo;
+                                        ioctl(pollFd.fd, EVIOCGABS(ABS_Y), &absInfo);
+
+                                        controller->rightThumbY = (float)(event->value - absInfo.minimum) / (float)(absInfo.maximum - absInfo.minimum);
+                                        controller->rightThumbY = controller->rightThumbY*2 - 1;
+
+                                        int centerY = (absInfo.maximum + absInfo.minimum) / 2;
+                                        
+                                    }
+                                }
+                                else if (event->type == EV_SYN)
+                                {
+                                    if (event->code == SYN_DROPPED)
+                                    {
+                                        // TODO: Handle missed event
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 return platform->DoRender(pixels);
             }
 
