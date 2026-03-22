@@ -38,6 +38,7 @@ Chris Cascioli - GetWindowHandle() and warning cleanup
     #include <windows.h>
     #include <d3d12.h>
     #include <dxgi1_6.h>
+    #include <xinput.h>
 #elif defined(THIRTEEN_PLATFORM_WEB)
     #include <emscripten/emscripten.h>
     #include <emscripten/html5.h>
@@ -54,6 +55,7 @@ Chris Cascioli - GetWindowHandle() and warning cleanup
     #pragma comment(lib, "d3d12.lib")
     #pragma comment(lib, "dxgi.lib")
     #pragma comment(lib, "user32.lib")
+    #pragma comment(lib, "xinput.lib")
 
     #define DX12VALIDATION() (_DEBUG && false)
 #endif
@@ -161,12 +163,58 @@ namespace Thirteen
     // Returns whether a keyboard key was pressed in the previous frame (use Windows virtual key codes).
     [[nodiscard]] bool GetKeyLastFrame(int keyCode);
 
+    enum ControllerButton : uint16_t
+    {
+        DPadUp = 0x0001,
+        DPadDown = 0x0002,
+        DPadLeft = 0x0004,
+        DPadRight = 0x0008,
+        Start = 0x0010,
+        Back = 0x0020,
+        LeftThumb = 0x0040,
+        RightThumb = 0x0080,
+        LeftShoulder = 0x0100,
+        RightShoulder = 0x0200,
+        A = 0x0400,
+        B = 0x0800,
+        X = 0x1000,
+        Y = 0x2000
+    };
+
+    // Returns whether a controller button is currently pressed.
+    [[nodiscard]] bool GetControllerButton(int controllerIndex, ControllerButton button);
+
+    // Returns whether a controller button was pressed in the previous frame.
+    [[nodiscard]] bool GetControllerButtonLastFrame(int controllerIndex, ControllerButton button);
+
+    // Returns current trigger value in [0, 1].
+    [[nodiscard]] float GetControllerTrigger(int controllerIndex, bool left);
+
+    // Returns previous-frame trigger value in [0, 1].
+    [[nodiscard]] float GetControllerTriggerLastFrame(int controllerIndex, bool left);
+
+    // Returns current thumbstick values in approximately [-1, 1].
+    void GetControllerThumbstick(int controllerIndex, bool left, float& x, float& y);
+
+    // Returns previous-frame thumbstick values in approximately [-1, 1].
+    void GetControllerThumbstickLastFrame(int controllerIndex, bool left, float& x, float& y);
+
 }
 
 // ========== Implementation ==========
 #ifdef THIRTEEN_IMPLEMENTATION
 namespace Thirteen
 {
+    struct ControllerState
+    {
+        uint16_t buttons = 0;
+        float leftTrigger = 0.0f;
+        float rightTrigger = 0.0f;
+        float leftThumbX = 0.0f;
+        float leftThumbY = 0.0f;
+        float rightThumbX = 0.0f;
+        float rightThumbY = 0.0f;
+    };
 
     // Internal state
     namespace Internal
@@ -201,6 +249,9 @@ namespace Thirteen
         bool prevMouseButtons[3] = { false, false, false };
         bool keys[256] = {};
         bool prevKeys[256] = {};
+
+        ControllerState controllers[4] = {};
+        ControllerState prevControllers[4] = {};
 
         // The pixels to write to.
         uint8* Pixels = nullptr;
@@ -551,6 +602,59 @@ namespace Thirteen
 
             bool Render(const uint8* pixels, uint32 width, uint32 height, bool vsyncEnabled)
             {
+                for (int controllerIndex = 0; controllerIndex < 4; ++controllerIndex)
+                {
+                    controllers[controllerIndex] = ControllerState{};
+
+                    XINPUT_STATE state;
+                    ZeroMemory(&state, sizeof(XINPUT_STATE));
+                    DWORD result = XInputGetState(controllerIndex, &state);
+                    if (result != ERROR_SUCCESS)
+                        continue;
+
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP)
+                        controllers[controllerIndex].buttons |= ControllerButton::DPadUp;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN)
+                        controllers[controllerIndex].buttons |= ControllerButton::DPadDown;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT)
+                        controllers[controllerIndex].buttons |= ControllerButton::DPadLeft;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT)
+                        controllers[controllerIndex].buttons |= ControllerButton::DPadRight;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_START)
+                        controllers[controllerIndex].buttons |= ControllerButton::Start;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_BACK)
+                        controllers[controllerIndex].buttons |= ControllerButton::Back;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_THUMB)
+                        controllers[controllerIndex].buttons |= ControllerButton::LeftThumb;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_THUMB)
+                        controllers[controllerIndex].buttons |= ControllerButton::RightThumb;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER)
+                        controllers[controllerIndex].buttons |= ControllerButton::LeftShoulder;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER)
+                        controllers[controllerIndex].buttons |= ControllerButton::RightShoulder;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_A)
+                        controllers[controllerIndex].buttons |= ControllerButton::A;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_B)
+                        controllers[controllerIndex].buttons |= ControllerButton::B;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_X)
+                        controllers[controllerIndex].buttons |= ControllerButton::X;
+                    if (state.Gamepad.wButtons & XINPUT_GAMEPAD_Y)
+                        controllers[controllerIndex].buttons |= ControllerButton::Y;
+
+                    controllers[controllerIndex].leftTrigger = float(state.Gamepad.bLeftTrigger) / 255.0f;
+                    controllers[controllerIndex].rightTrigger = float(state.Gamepad.bRightTrigger) / 255.0f;
+                    auto NormalizeThumbAxis = [](short value) -> float
+                    {
+                        const float normalized = float(value) / 32767.0f;
+                        return normalized < -1.0f ? -1.0f : (normalized > 1.0f ? 1.0f : normalized);
+                    };
+
+                    controllers[controllerIndex].leftThumbX = NormalizeThumbAxis(state.Gamepad.sThumbLX);
+                    controllers[controllerIndex].leftThumbY = NormalizeThumbAxis(state.Gamepad.sThumbLY);
+                    controllers[controllerIndex].rightThumbX = NormalizeThumbAxis(state.Gamepad.sThumbRX);
+                    controllers[controllerIndex].rightThumbY = NormalizeThumbAxis(state.Gamepad.sThumbRY);
+                }
+
                 WaitForGpu();
                 frameIndex = swapChain->GetCurrentBackBufferIndex();
 
@@ -2167,6 +2271,7 @@ namespace Thirteen
         prevMouseY = mouseY;
         memcpy(prevMouseButtons, mouseButtons, sizeof(mouseButtons));
         memcpy(prevKeys, keys, sizeof(keys));
+        memcpy(prevControllers, controllers, sizeof(controllers[0]) * 4);
 
         // Calculate frame time
         double currentTime = NowSeconds();
@@ -2328,6 +2433,62 @@ namespace Thirteen
         if (keyCode >= 0 && keyCode < 256)
             return Internal::prevKeys[keyCode];
         return false;
+    }
+
+    bool GetControllerButton(int controllerIndex, ControllerButton button)
+    {
+        if (controllerIndex >= 0 && controllerIndex < 4)
+            return (Internal::controllers[controllerIndex].buttons & button) != 0;
+        return false;
+    }
+
+    bool GetControllerButtonLastFrame(int controllerIndex, ControllerButton button)
+    {
+        if (controllerIndex >= 0 && controllerIndex < 4)
+            return (Internal::prevControllers[controllerIndex].buttons & button) != 0;
+        return false;
+    }
+
+    float GetControllerTrigger(int controllerIndex, bool left)
+    {
+        if (controllerIndex >= 0 && controllerIndex < 4)
+            return left ? Internal::controllers[controllerIndex].leftTrigger : Internal::controllers[controllerIndex].rightTrigger;
+        return 0.0f;
+    }
+
+    float GetControllerTriggerLastFrame(int controllerIndex, bool left)
+    {
+        if (controllerIndex >= 0 && controllerIndex < 4)
+            return left ? Internal::prevControllers[controllerIndex].leftTrigger : Internal::prevControllers[controllerIndex].rightTrigger;
+        return 0.0f;
+    }
+
+    void GetControllerThumbstick(int controllerIndex, bool left, float& x, float& y)
+    {
+        if (controllerIndex >= 0 && controllerIndex < 4)
+        {
+            x = left ? Internal::controllers[controllerIndex].leftThumbX : Internal::controllers[controllerIndex].rightThumbX;
+            y = left ? Internal::controllers[controllerIndex].leftThumbY : Internal::controllers[controllerIndex].rightThumbY;
+        }
+        else
+        {
+            x = 0.0f;
+            y = 0.0f;
+        }
+    }
+
+    void GetControllerThumbstickLastFrame(int controllerIndex, bool left, float& x, float& y)
+    {
+        if (controllerIndex >= 0 && controllerIndex < 4)
+        {
+            x = left ? Internal::prevControllers[controllerIndex].leftThumbX : Internal::prevControllers[controllerIndex].rightThumbX;
+            y = left ? Internal::prevControllers[controllerIndex].leftThumbY : Internal::prevControllers[controllerIndex].rightThumbY;
+        }
+        else
+        {
+            x = 0.0f;
+            y = 0.0f;
+        }
     }
 
     void Shutdown()
