@@ -226,6 +226,106 @@ Checks if a keyboard key was pressed in the previous frame.
 
 ---
 
+### Controller Input (Windows only)
+
+Controller input currently uses XInput and is available on Windows builds only. On all other platforms, you can call the functions
+but it will always report that no buttons are pressed, the triggers are at 0, and the thumbsticks are at (0,0).
+
+Supported controller indices are `0` to `3`.
+
+Controller button bit flags used with `GetControllerButton()` and `GetControllerButtonLastFrame()`:
+
+- `ControllerButton::DPadUp`
+- `ControllerButton::DPadDown`
+- `ControllerButton::DPadLeft`
+- `ControllerButton::DPadRight`
+- `ControllerButton::Start`
+- `ControllerButton::Back`
+- `ControllerButton::LeftThumb`
+- `ControllerButton::RightThumb`
+- `ControllerButton::LeftShoulder`
+- `ControllerButton::RightShoulder`
+- `ControllerButton::A`
+- `ControllerButton::B`
+- `ControllerButton::X`
+- `ControllerButton::Y`
+
+---
+
+#### `bool GetControllerButton(int controllerIndex, ControllerButton button)`
+Checks if a controller button is currently pressed.
+
+**Parameters:**
+- `controllerIndex` - Controller index (`0` to `3`)
+- `button` - Button flag from `ControllerButton`
+
+**Returns:** `true` if pressed, `false` otherwise.
+
+---
+
+#### `bool GetControllerButtonLastFrame(int controllerIndex, ControllerButton button)`
+Checks if a controller button was pressed in the previous frame.
+
+**Parameters:**
+- `controllerIndex` - Controller index (`0` to `3`)
+- `button` - Button flag from `ControllerButton`
+
+**Returns:** `true` if pressed in the previous frame, `false` otherwise.
+
+---
+
+#### `float GetControllerTrigger(int controllerIndex, bool left)`
+Gets the current normalized trigger value.
+
+**Parameters:**
+- `controllerIndex` - Controller index (`0` to `3`)
+- `left` - `true` for left trigger, `false` for right trigger
+
+**Returns:** Trigger value in the range `[0, 1]`.
+
+---
+
+#### `float GetControllerTriggerLastFrame(int controllerIndex, bool left)`
+Gets the previous-frame normalized trigger value.
+
+**Parameters:**
+- `controllerIndex` - Controller index (`0` to `3`)
+- `left` - `true` for left trigger, `false` for right trigger
+
+**Returns:** Trigger value in the range `[0, 1]` from the previous frame.
+
+---
+
+#### `void GetControllerThumbstick(int controllerIndex, bool left, float& x, float& y)`
+Gets the current normalized thumbstick vector.
+
+**Parameters:**
+- `controllerIndex` - Controller index (`0` to `3`)
+- `left` - `true` for left stick, `false` for right stick
+- `x` - Receives the X axis value
+- `y` - Receives the Y axis value
+
+**Notes:**
+- Values are normalized to approximately `[-1, 1]`.
+- For invalid controller indices, both outputs are set to `0`.
+
+---
+
+#### `void GetControllerThumbstickLastFrame(int controllerIndex, bool left, float& x, float& y)`
+Gets the previous-frame normalized thumbstick vector.
+
+**Parameters:**
+- `controllerIndex` - Controller index (`0` to `3`)
+- `left` - `true` for left stick, `false` for right stick
+- `x` - Receives the X axis value
+- `y` - Receives the Y axis value
+
+**Notes:**
+- Values are normalized to approximately `[-1, 1]`.
+- For invalid controller indices, both outputs are set to `0`.
+
+---
+
 ### Input Helpers
 
 To detect a single key press or button click (not held down), compare current and previous frame states:
