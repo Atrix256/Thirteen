@@ -1743,13 +1743,16 @@ namespace Thirteen
             void (*glBlitFramebuffer)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum) = nullptr;
 
             GLuint texture = 0;
-            
             GLuint framebuffer = 0;
             
             udev *(*udev_new)(void) = nullptr;
             void (*udev_unref)(udev *) = nullptr;
             
             udev_monitor *(*udev_monitor_new_from_netlink)(udev *, const char *) = nullptr;
+            int (*udev_monitor_filter_add_match_subsystem_devtype)(struct udev_monitor *, const char *, const char *) = nullptr;
+            int (*udev_monitor_enable_receiving)(struct udev_monitor *) = nullptr;
+            int (*udev_monitor_get_fd)(struct udev_monitor *) = nullptr;
+            udev_device *(*udev_monitor_receive_device)(struct udev_monitor *) = nullptr;
             udev_monitor *(*udev_monitor_ref)(udev_monitor *) = nullptr;
             udev_monitor *(*udev_monitor_unref)(udev_monitor *) = nullptr;
             
@@ -1769,9 +1772,18 @@ namespace Thirteen
             void (*udev_device_unref)(udev_device *) = nullptr;
 
             void * libudevLibrary = nullptr;
+            
 
-            int gamepadFd[1];
-            bool foundGamepads = false;
+            int hotplugFd = -1;
+            udev_monitor* udevMonitor = nullptr;
+
+            // Bookkeeping
+            int gamepadFd[4] = {-1, -1, -1, -1};
+            static const int maxDevNodeLength = 256;
+            char gamepadDevNode[4][maxDevNodeLength] = {0};
+            int gamepadCount = 0;
+            
+            bool foundOneGamepad = false;
 
             bool InitWindow(uint32 width, uint32 height)
             {
@@ -1999,6 +2011,10 @@ namespace Thirteen
                 udev_unref = (void(*)(udev *)) dlsym(libudevLibrary, "udev_unref");
                 
                 udev_monitor_new_from_netlink = (udev_monitor*(*)(udev *, const char *)) dlsym(libudevLibrary, "udev_monitor_new_from_netlink");
+                udev_monitor_filter_add_match_subsystem_devtype = (int(*)(struct udev_monitor *, const char *, const char *)) dlsym(libudevLibrary, "udev_monitor_filter_add_match_subsystem_devtype");
+                udev_monitor_enable_receiving = (int(*)(struct udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_enable_receiving");
+                udev_monitor_receive_device = (udev_device*(*)(struct udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_receive_device");
+                udev_monitor_get_fd = (int(*)(struct udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_get_fd");
                 udev_monitor_ref = (udev_monitor*(*)(udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_ref");
                 udev_monitor_unref = (udev_monitor*(*)(udev_monitor *)) dlsym(libudevLibrary, "udev_monitor_unref");
                 
@@ -2025,17 +2041,21 @@ namespace Thirteen
                 if (udevCtx)
                 {
                     // TODO: Monitor hotplugged input
-                    //udev_monitor *udevMonitor = udev_monitor_new_from_netlink(udevCtx, "input");
-                    //udev_monitor_enable_receiving(udevMonitor);
+                    udevMonitor = udev_monitor_new_from_netlink(udevCtx, "udev");
+                    if (udevMonitor)
+                    {
+                        udev_monitor_filter_add_match_subsystem_devtype(udevMonitor, "input", NULL);
+                        udev_monitor_enable_receiving(udevMonitor);
+
+                        hotplugFd = udev_monitor_get_fd(udevMonitor);
+                    }
 
                     // Initial scan
-                    udev_enumerate* udevEnumerator = udev_enumerate_new(udevCtx);
-                    udev_device *potentialGamepadDevice = nullptr;
+                    udev_enumerate *udevEnumerator = udev_enumerate_new(udevCtx);
 
                     if (udevEnumerator)
                     {
                         udev_enumerate_add_match_subsystem(udevEnumerator, "input");
-
                         udev_enumerate_add_match_property(udevEnumerator, "ID_INPUT_JOYSTICK", "1");
 
                         udev_enumerate_scan_devices(udevEnumerator);
@@ -2045,51 +2065,64 @@ namespace Thirteen
 
                         for (; element; element = udev_list_entry_get_next(element))
                         {
-                            const char* devicePath = udev_list_entry_get_name(element);
-                            udev_device *device = udev_device_new_from_syspath(udevCtx, devicePath);
-                            const char* devNode = udev_device_get_devnode(device);
+                            if (gamepadCount >= 4) break;
 
+                            const char* devicePath = udev_list_entry_get_name(element);
+                            udev_device* device = udev_device_new_from_syspath(udevCtx, devicePath);
                             if (device)
                             {
-                                
-                                if (devicePath && devNode)
+                                const char* devNode = udev_device_get_devnode(device);
+                                if (devNode) //&& devicePath 
                                 {
-                                   int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
-                                   if (possibleGamepadFd)
-                                   {
-                                       // User needs to be in the "input" group for this to work.
-                                       // For more info on ioctl and the EVIOC macros:
-                                       // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
+                                    printf("devNode = %s\n", devNode);
+                                    int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
+                                    if (possibleGamepadFd >= 0)
+                                    {
+                                        // User needs to be in the "input" group for this to work.
+                                        // For more info on ioctl and the EVIOC macros:
+                                        // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
                                        
-                                       // Query for info and capabilities
-                                       struct input_id devId;
-                                       ioctl(possibleGamepadFd, EVIOCGID, &devId);
-                                       char name[256] = {0};
-                                       ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
+                                        // Query for info and capabilities
+                                        struct input_id devId;
+                                        ioctl(possibleGamepadFd, EVIOCGID, &devId);
+                                        char name[256] = {0};
+                                        ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
+                                        printf("(%s) found (fd=%d).\n", name, possibleGamepadFd);
+                                       
+                                        // Interrogate the potential gamepad by checking if the device has the BTN_GAMEPAD button
+                                        // NOTE: We're working with bit arrays when using EVIOCGBIT
+                                        unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};
+                                        bool isGamepad = false;
+                                       
+                                        if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
+                                        {
+                                            unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
+                                            isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
+                                            if (isGamepad)
+                                            {
+                                                // Check for empty slot
+                                                for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                                                {
+                                                    if (gamepadFd[gamepadIndex] == -1 && strlen(devNode) < maxDevNodeLength)
+                                                    {
+                                                        foundOneGamepad = true;
+                                                        gamepadFd[gamepadIndex] = possibleGamepadFd;
+                                                        memcpy(gamepadDevNode[gamepadIndex], devNode, strlen(devNode));
+                                                        gamepadCount++;
+                                                        printf("Initial scan of gamepad (%s) found (fd=%d) with dev node %s\n", name, possibleGamepadFd, gamepadDevNode[gamepadIndex]);
+                                                        break;
+                                                    }
+                                                }
 
-                                       // Interrogate the potential gamepad
-                                       // NOTE: We're working with bit arrays when using EVIOCGBIT
-                                       unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};                                       
-                                       if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
-                                       {
-                                           unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
-                                           bool isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
-                                           if (isGamepad)
-                                           {
-                                               foundGamepads = true;
-                                               gamepadFd[0] = possibleGamepadFd;
-                                               udev_device_unref(device);
-                                               break;
-                                           }
-                                       }
+                                                // No empty slot available
+                                            }
+                                        }
 
-                                       close(possibleGamepadFd);
-                                   }
+                                        if (!isGamepad)
+                                            close(possibleGamepadFd);
+                                    }
                                 }
-
-
-
-                                potentialGamepadDevice = device;
+                                
                                 udev_device_unref(device); // Will leak memory otherwise!
                             }
                         }
@@ -2098,9 +2131,14 @@ namespace Thirteen
                     udev_enumerate_unref(udevEnumerator);
                 }
 
-                if (foundGamepads)
+                if (foundOneGamepad)
                 {
-                    printf("Found at least one gamepad!\n");
+                    printf("Found %d gamepad%s\n", gamepadCount, (gamepadCount > 1) ? "s!" : "!");
+                    printf("After the initial scan:\n");
+                    for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                    {
+                        printf("fd = %d, devnode = %s\n", gamepadFd[gamepadIndex], gamepadDevNode[gamepadIndex]);
+                    }
                 }
                 
                 return true;
@@ -2132,43 +2170,141 @@ namespace Thirteen
             }
 
             void PumpMessages()
-            {
-                XEvent event;
+             {
+                 XEvent event;
 
-                while (XPending(x11Display)) {
-                    XNextEvent(x11Display, &event);
-                    switch (event.type)
-                    {
-                    case KeyPress:
-                        if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
-                        {
-                            keys[keycode] = true;
-                        }
-                        break;
-                    case KeyRelease:
-                        if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
-                        {
-                            keys[keycode] = false;
-                        }
-                        break;
-                    case ButtonPress:
-                        mouseButtons[remapMouseButton(event.xbutton.button)] = true;
-                        break;
-                    case ButtonRelease:
-                        mouseButtons[remapMouseButton(event.xbutton.button)] = false;
-                        break;
-                    case MotionNotify:
-                        mouseX = event.xmotion.x;
-                        mouseY = event.xmotion.y;
-                        break;
-                    case ClientMessage:
-                        if ((Atom)event.xclient.data.l[0] == closeWindowAtom)
-                            shouldQuit = true;
-                        break;
-                    }
-                }
-                
-            }
+                 while (XPending(x11Display)) {
+                     XNextEvent(x11Display, &event);
+                     switch (event.type)
+                     {
+                         case KeyPress:
+                             if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
+                             {
+                                 keys[keycode] = true;
+                             }
+                             break;
+                         case KeyRelease:
+                             if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
+                             {
+                                 keys[keycode] = false;
+                             }
+                             break;
+                         case ButtonPress:
+                             mouseButtons[remapMouseButton(event.xbutton.button)] = true;
+                             break;
+                         case ButtonRelease:
+                             mouseButtons[remapMouseButton(event.xbutton.button)] = false;
+                             break;
+                         case MotionNotify:
+                             mouseX = event.xmotion.x;
+                             mouseY = event.xmotion.y;
+                             break;
+                         case ClientMessage:
+                             if ((Atom)event.xclient.data.l[0] == closeWindowAtom)
+                                 shouldQuit = true;
+                             break;
+                     }
+                 }
+
+                 // Check if any new gamepads was hotplugged, or if we lost connection
+                 if (udevMonitor && hotplugFd) 
+                 {
+                     struct pollfd pollFd;
+                     pollFd.fd = hotplugFd;
+                     pollFd.events = POLLIN;
+                     pollFd.revents = 0;
+
+                     if (poll(&pollFd, 1, 0) > 0)
+                     {
+                         struct udev_device* device = udev_monitor_receive_device(udevMonitor);
+
+                         if (device)
+                         {
+                             const char* propValue = udev_device_get_property_value(device, "ID_INPUT_JOYSTICK");
+                             if (propValue && strcmp(propValue, "1") == 0)
+                             {
+                                 const char* devNode = udev_device_get_devnode(device);
+                                 if (devNode)
+                                 {
+                                     printf("possible hotplug at %s\n", devNode);
+                                     int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
+                                     if (possibleGamepadFd > 0 && gamepadCount < 4)
+                                     {
+                                         printf("possible hotplug fd is %d\n", possibleGamepadFd);
+                                         // Query for info and capabilities
+                                         struct input_id devId;
+                                         ioctl(possibleGamepadFd, EVIOCGID, &devId);
+                                         
+                                         char name[256] = {0};
+                                         ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
+
+                                         // Interrogate the potential gamepad
+                                         // NOTE: We're working with bit arrays when using EVIOCGBIT
+                                         unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};
+                                         bool isGamepad = false;
+                                         if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
+                                         {
+                                             unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
+                                             isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
+                                             if (isGamepad)
+                                             {
+                                                 
+                                                 for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                                                 {
+                                                     if (gamepadFd[gamepadIndex] == -1 && strlen(devNode) < maxDevNodeLength)
+                                                     {
+                                                         gamepadFd[gamepadIndex] = possibleGamepadFd;
+                                                         memcpy(gamepadDevNode[gamepadIndex], devNode, strlen(devNode));
+                                                         gamepadCount++;
+                                                         printf("Hotplugged a gamepad?\n");
+                                                         foundOneGamepad = true;
+                                                         break;
+                                                     }
+                                                 }
+                                             }
+                                         }
+
+                                         if (!isGamepad)
+                                             close(possibleGamepadFd);
+                                     }
+                                     else
+                                     {
+                                         // This might be something that got unplugged.
+                                         for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                                         {
+                                             if (gamepadFd[gamepadIndex] != -1)
+                                             {
+                                                 bool isTheUnpluggedGamepad = strcmp(gamepadDevNode[gamepadIndex], devNode) == 0;
+                                                 if (isTheUnpluggedGamepad)
+                                                 {
+                                                     close(gamepadFd[gamepadIndex]);
+                                                     
+                                                     // Reset this slot
+                                                     gamepadFd[gamepadIndex] = -1;
+                                                     memset(gamepadDevNode[gamepadIndex], 0, maxDevNodeLength);
+                                                     
+                                                     gamepadCount--;
+                                                     printf("Hotunplugged a gamepad?\n");
+                                                     break;
+                                                 }
+                                             }
+                                         }
+                                     }
+
+                                     printf("After udev monitor:\n");
+                                     for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                                     {
+                                         printf("fd = %d, devnode = %s\n", gamepadFd[gamepadIndex], gamepadDevNode[gamepadIndex]);
+                                     }
+                                 }
+                             }
+                             
+                             udev_device_unref(device);
+                         }
+                     }
+                 }
+             }
+
 
             void SetTitle(const char* title)
             {
@@ -2230,11 +2366,12 @@ namespace Thirteen
 
             bool Render(const uint8* pixels, uint32, uint32, bool)
             {
-                for (int controllerIndex = 0; platform->foundGamepads && (controllerIndex < 1); ++controllerIndex)
+                for (int controllerIndex = 0; platform->foundOneGamepad && (controllerIndex < 4); ++controllerIndex)
                 {
                     // Future reference: evdev emits event, unlike the state-based win32 XInput. Therefore, do no zero the current state.
                     //controllers[controllerIndex] = ControllerState{};
 
+                    if (platform->gamepadFd[controllerIndex] == -1) continue;
                     ControllerState* controller = &controllers[controllerIndex];
                     
                     struct input_event events[32];
@@ -2244,14 +2381,19 @@ namespace Thirteen
                     pollFd.events = POLLIN;
                     pollFd.revents = 0;
 
-                    if (poll(&pollFd, 1, 0) > 0)
+                    int pollResult = poll(&pollFd, 1, 0);
+                    if (pollResult > 0)
                     {
                         int bytesRead = read(platform->gamepadFd[controllerIndex], &events, sizeof(events));
+                        //printf("slot %d (fd=%d): poll hit, read %d bytes\n", controllerIndex, pollFd.fd, bytesRead);
+                        
                         if(bytesRead > 0)
                         {
+                            //printf("bytesRead > 0 (fd=%d)\n", pollFd.fd);
                             int eventCount = bytesRead / sizeof(struct input_event);
                             for (int eventIndex = 0; eventIndex < eventCount; eventIndex++)
                             {
+                                //printf("  event type=%d code=%d value=%d\n", events[eventIndex].type, events[eventIndex].code, events[eventIndex].value);
                                 struct input_event* event = &events[eventIndex];
                                 if (event->type == EV_KEY)
                                 {
@@ -2304,7 +2446,7 @@ namespace Thirteen
                                         else if (event->value == -1)
                                             controller->buttons |= ControllerButton::DPadLeft;
                                         else if (event->value == 0) // left/right was released
-                                            controllers->buttons &= ~(ControllerButton::DPadRight | ControllerButton::DPadLeft);
+                                            controller->buttons &= ~(ControllerButton::DPadRight | ControllerButton::DPadLeft);
                                     }
                                     else if (event->code == ABS_HAT0Y)
                                     {
@@ -2313,7 +2455,7 @@ namespace Thirteen
                                         else if (event->value == -1)
                                             controller->buttons |= ControllerButton::DPadUp;
                                         else if (event->value == 0) // up/down was released
-                                            controllers->buttons &= ~(ControllerButton::DPadUp | ControllerButton::DPadDown);
+                                            controller->buttons &= ~(ControllerButton::DPadUp | ControllerButton::DPadDown);
                                     }
                                     
                                     if (event->code == ABS_X)
@@ -2374,6 +2516,7 @@ namespace Thirteen
                                     if (event->code == SYN_DROPPED)
                                     {
                                         // TODO: Handle missed event
+                                        printf("SYN_DROPPED\n");
                                     }
                                 }
                             }
