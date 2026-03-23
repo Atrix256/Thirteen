@@ -1984,9 +1984,6 @@ namespace Thirteen
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
                 glFramebufferTexture(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0);
 
-
-#if 1
-                
                 libudevLibrary = dlopen("libudev.so.1", RTLD_LAZY | RTLD_LOCAL);
                 if (!libudevLibrary)
                 {
@@ -2045,10 +2042,9 @@ namespace Thirteen
                         udev_list_entry* deviceList = udev_enumerate_get_list_entry(udevEnumerator);
 
                         udev_list_entry* element = deviceList;
-                        int i = 1;
+
                         for (; element; element = udev_list_entry_get_next(element))
                         {
-                            printf("\ni = %d\n", i++);
                             const char* devicePath = udev_list_entry_get_name(element);
                             udev_device *device = udev_device_new_from_syspath(udevCtx, devicePath);
                             const char* devNode = udev_device_get_devnode(device);
@@ -2058,14 +2054,11 @@ namespace Thirteen
                                 
                                 if (devicePath && devNode)
                                 {
-                                   printf("Device information:\n");
-                                   printf("devicePath = %s\ndevNode = %s\n", devicePath, devNode);
-
                                    int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
                                    if (possibleGamepadFd)
                                    {
-                                       // User needs to be in the "input" group for this to work
-                                       // For more info on ioctl and the EVIOC macros
+                                       // User needs to be in the "input" group for this to work.
+                                       // For more info on ioctl and the EVIOC macros:
                                        // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
                                        
                                        // Query for info and capabilities
@@ -2074,16 +2067,11 @@ namespace Thirteen
                                        char name[256] = {0};
                                        ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
 
-                                       printf("Device: %s (vendor=%04x product=%04x)\n", name, devId.vendor, devId.product);
-
                                        // Interrogate the potential gamepad
-
-                                       // We're working with bit arrays when using EVIOCGBIT
-
+                                       // NOTE: We're working with bit arrays when using EVIOCGBIT
                                        unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};                                       
                                        if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
                                        {
-                                           printf("hm..\n");
                                            unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
                                            bool isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
                                            if (isGamepad)
@@ -2105,13 +2093,10 @@ namespace Thirteen
                                 udev_device_unref(device); // Will leak memory otherwise!
                             }
                         }
-                        
                     }
-
+                    
                     udev_enumerate_unref(udevEnumerator);
-
                 }
-#endif
 
                 if (foundGamepads)
                 {
@@ -2247,7 +2232,7 @@ namespace Thirteen
             {
                 for (int controllerIndex = 0; platform->foundGamepads && (controllerIndex < 1); ++controllerIndex)
                 {
-                    // Future reference: evdev is event-based, unlike the state-based win32 XInput. Therefore, do no zero current state.
+                    // Future reference: evdev emits event, unlike the state-based win32 XInput. Therefore, do no zero the current state.
                     //controllers[controllerIndex] = ControllerState{};
 
                     ControllerState* controller = &controllers[controllerIndex];
@@ -2271,36 +2256,45 @@ namespace Thirteen
                                 if (event->type == EV_KEY)
                                 {
                                     bool pressed = event->value == 1;
-                                    bool released = event->value == 0;
-                                    bool autoRepeat = event->value == 2;
+                                    //bool released = event->value == 0;
+                                    //bool autoRepeat = event->value == 2;
                                     
-                                    if(event->code == BTN_SOUTH)
+                                    if (event->code == BTN_SOUTH)
                                         pressed ? controller->buttons |= ControllerButton::A : controller->buttons &= ~ControllerButton::A;
-                                    else if(event->code == BTN_EAST)
+                                    else if (event->code == BTN_EAST)
                                         pressed ? controller->buttons |= ControllerButton::B : controller->buttons &= ~ControllerButton::B;
-                                    else if(event->code == BTN_WEST)
+                                    else if (event->code == BTN_WEST)
                                         pressed ? controller->buttons |= ControllerButton::X : controller->buttons &= ~ControllerButton::X;
-                                    else if(event->code == BTN_NORTH)
+                                    else if (event->code == BTN_NORTH)
                                         pressed ? controller->buttons |= ControllerButton::Y : controller->buttons &= ~ControllerButton::Y;
 
-                                    else if(event->code == BTN_DPAD_RIGHT)
+                                    else if (event->code == BTN_DPAD_RIGHT)
                                         pressed ? controller->buttons |= ControllerButton::DPadRight : controller->buttons &= ~ControllerButton::DPadRight;
-                                    else if(event->code == BTN_DPAD_DOWN)
+                                    else if (event->code == BTN_DPAD_DOWN)
                                         pressed ? controller->buttons |= ControllerButton::DPadDown : controller->buttons &= ~ControllerButton::DPadDown;
-                                    else if(event->code == BTN_DPAD_LEFT)
+                                    else if (event->code == BTN_DPAD_LEFT)
                                         pressed ? controller->buttons |= ControllerButton::DPadLeft : controller->buttons &= ~ControllerButton::DPadLeft;
-                                    else if(event->code == BTN_DPAD_UP)
+                                    else if (event->code == BTN_DPAD_UP)
                                         pressed ? controller->buttons |= ControllerButton::DPadUp : controller->buttons &= ~ControllerButton::DPadUp;
                                     
-                                    else if(event->code == BTN_THUMBL)
+                                    else if (event->code == BTN_THUMBL)
                                         pressed ? controller->buttons |= ControllerButton::LeftThumb : controller->buttons &= ~ControllerButton::LeftThumb;
-                                    else if(event->code == BTN_THUMBR)
+                                    else if (event->code == BTN_THUMBR)
                                         pressed ? controller->buttons |= ControllerButton::RightThumb : controller->buttons &= ~ControllerButton::RightThumb;
 
+                                    else if (event->code == BTN_TL)
+                                        pressed ? controller->buttons |= ControllerButton::LeftShoulder : controller->buttons &= ~ControllerButton::LeftShoulder;
+                                    else if (event->code == BTN_TR)
+                                        pressed ? controller->buttons |= ControllerButton::RightShoulder : controller->buttons &= ~ControllerButton::RightShoulder;
+
+                                    else if (event->code == BTN_SELECT)
+                                        pressed ? controller->buttons |= ControllerButton::Back : controller->buttons &= ~ControllerButton::Back;
+                                    else if (event->code == BTN_START)
+                                        pressed ? controller->buttons |= ControllerButton::Start : controller->buttons &= ~ControllerButton::Start;
+                                    
                                 }
                                 else if (event->type == EV_ABS)
                                 {
-                                    // TODO: Read axis values
 
                                     // For some controllers, DPAD will come through ABS_HAT codes
                                     if (event->code == ABS_HAT0X)
@@ -2327,9 +2321,6 @@ namespace Thirteen
                                         // X values of the left stick
                                         struct input_absinfo absInfo;
                                         ioctl(pollFd.fd, EVIOCGABS(ABS_X), &absInfo);
-                                        //printf("absinfo of ABS_X:\n");
-                                        //printf("value = %d\nmin = %d\nmax = %d\nfuzz = %d\nflat = %d\nresolution = %d\n", absInfo.value, absInfo.minimum, absInfo.maximum, absInfo.fuzz, absInfo.flat, absInfo.resolution);
-                                        //printf("val = %d\n", event->value);
 
                                         // Map an arbitrary range [absInfo.minimum, absInfo.maximum] to [-1, 1]
                                         // by first normalizing to [0, 1] then scale it to [-1, 1]
@@ -2338,7 +2329,7 @@ namespace Thirteen
                                         controller->leftThumbX = controller->leftThumbX*2 - 1;
 
                                         // deadzone
-                                        int centerX = (absInfo.maximum + absInfo.minimum) / 2;
+                                        //int centerX = (absInfo.maximum + absInfo.minimum) / 2;
 
                                     }
                                     else if (event->code == ABS_Y)
@@ -2355,32 +2346,26 @@ namespace Thirteen
                                     }
                                     else if (event->code == ABS_RX)
                                     {
-                                        // X values of the left stick
+                                        // X values of the right stick
                                         struct input_absinfo absInfo;
                                         ioctl(pollFd.fd, EVIOCGABS(ABS_X), &absInfo);
-                                        //printf("absinfo of ABS_X:\n");
-                                        //printf("value = %d\nmin = %d\nmax = %d\nfuzz = %d\nflat = %d\nresolution = %d\n", absInfo.value, absInfo.minimum, absInfo.maximum, absInfo.fuzz, absInfo.flat, absInfo.resolution);
-                                        //printf("val = %d\n", event->value);
-
-                                        // Map an arbitrary range [absInfo.minimum, absInfo.maximum] to [-1, 1]
-                                        // by first normalizing to [0, 1] then scale it to [-1, 1]
 
                                         controller->rightThumbX = (float)(event->value - absInfo.minimum) / (float)(absInfo.maximum - absInfo.minimum);
                                         controller->rightThumbX = controller->rightThumbX*2 - 1;
-                                        // deadzone
-                                        int centerX = (absInfo.maximum + absInfo.minimum) / 2;
+                                        
+                                        // int centerX = (absInfo.maximum + absInfo.minimum) / 2;
 
                                     }
                                     else if (event->code == ABS_RY)
                                     {
-                                        // Y values of the left stick
+                                        // Y values of the right stick
                                         struct input_absinfo absInfo;
                                         ioctl(pollFd.fd, EVIOCGABS(ABS_Y), &absInfo);
 
                                         controller->rightThumbY = (float)(event->value - absInfo.minimum) / (float)(absInfo.maximum - absInfo.minimum);
                                         controller->rightThumbY = controller->rightThumbY*2 - 1;
 
-                                        int centerY = (absInfo.maximum + absInfo.minimum) / 2;
+                                        //int centerY = (absInfo.maximum + absInfo.minimum) / 2;
                                         
                                     }
                                 }
