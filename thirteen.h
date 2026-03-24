@@ -34,6 +34,7 @@ Chris Cascioli - GetWindowHandle() and warning cleanup
 // ========== Platform-Specific Includes ==========
 
 #ifdef THIRTEEN_PLATFORM_WINDOWS
+    #define NOMINMAX
     #define WIN32_LEAN_AND_MEAN
     #include <windows.h>
     #include <d3d12.h>
