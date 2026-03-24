@@ -67,7 +67,7 @@ int main(int argc, char** argv)
             }
 
             const float leftTrigger = Thirteen::GetControllerTrigger(controllerIndex, true);
-            const float leftTriggerLastFrame = Thirteen::GetControllerTriggerLastFrame(0, true);
+            const float leftTriggerLastFrame = Thirteen::GetControllerTriggerLastFrame(controllerIndex, true);
             if (fabsf(leftTrigger - leftTriggerLastFrame) > c_thumbStickEpsilon)
                 printf("[%d]: LeftTrigger: %.3f\n", controllerIndex, leftTrigger);
 
