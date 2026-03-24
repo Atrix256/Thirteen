@@ -1731,7 +1731,8 @@ namespace Thirteen
                 void Init(int fd, const char* name, const char* devNode)
                 {
                     this->fd = fd;
-                    // Fill in all the absinfo stuff
+                    
+                    // Fill in all the absinfo stuff, used to normalize sticks and triggers
                     
                     int absArray[] = {ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ};
                     for (unsigned int absIndex = 0; absIndex < (sizeof(absArray) / sizeof(absArray[0])); absIndex++)
@@ -1747,7 +1748,7 @@ namespace Thirteen
 
                 void DeInit()
                 {
-                    // close() in here as well?
+                    close(this->fd);
                     this->fd = -1;
                     this->initialized = false;
                     memset(this->devNode, 0, maxGamepadDevNodeLength);
@@ -2045,152 +2046,147 @@ namespace Thirteen
                     libudevLibrary =  dlopen("libudev.so", RTLD_LAZY | RTLD_LOCAL);
                 }
 
-                if (!libudevLibrary)
+                if (libudevLibrary)
                 {
-                    return false;
-                }
-
-                auto loadUdevFunction = [&](auto & targetFunctionPointer, const char* name)
-                {
-                    targetFunctionPointer = (std::remove_reference_t<decltype(targetFunctionPointer)>) dlsym(libudevLibrary, name);
-                    return targetFunctionPointer != nullptr;
-                };
-
-                if (!loadUdevFunction(udev_new, "udev_new")) return false;
-                if (!loadUdevFunction(udev_unref, "udev_unref")) return false;
-
-                if (!loadUdevFunction(udev_monitor_new_from_netlink, "udev_monitor_new_from_netlink")) return false;
-                if (!loadUdevFunction(udev_monitor_filter_add_match_subsystem_devtype, "udev_monitor_filter_add_match_subsystem_devtype")) return false;
-                if (!loadUdevFunction(udev_monitor_enable_receiving, "udev_monitor_enable_receiving")) return false;
-                if (!loadUdevFunction(udev_monitor_receive_device, "udev_monitor_receive_device")) return false;
-                if (!loadUdevFunction(udev_monitor_get_fd, "udev_monitor_get_fd")) return false;
-                if (!loadUdevFunction(udev_monitor_ref, "udev_monitor_ref")) return false;
-                if (!loadUdevFunction(udev_monitor_unref, "udev_monitor_unref")) return false;
-
-                if (!loadUdevFunction(udev_enumerate_new, "udev_enumerate_new")) return false;
-                if (!loadUdevFunction(udev_enumerate_add_match_subsystem, "udev_enumerate_add_match_subsystem")) return false;
-                if (!loadUdevFunction(udev_enumerate_add_match_property, "udev_enumerate_add_match_property")) return false;
-                if (!loadUdevFunction(udev_enumerate_scan_devices, "udev_enumerate_scan_devices")) return false;
-                if (!loadUdevFunction(udev_enumerate_get_list_entry, "udev_enumerate_get_list_entry")) return false;
-                if (!loadUdevFunction(udev_enumerate_unref, "udev_enumerate_unref")) return false;
-
-                if (!loadUdevFunction(udev_list_entry_get_next, "udev_list_entry_get_next")) return false;
-                if (!loadUdevFunction(udev_list_entry_get_name, "udev_list_entry_get_name")) return false;
-
-                if (!loadUdevFunction(udev_device_new_from_syspath, "udev_device_new_from_syspath")) return false;
-                if (!loadUdevFunction(udev_device_get_devnode, "udev_device_get_devnode")) return false;
-                if (!loadUdevFunction(udev_device_get_property_value, "udev_device_get_property_value")) return false;
-                if (!loadUdevFunction(udev_device_unref, "udev_device_unref")) return false;
-
-                udev* udevCtx = udev_new();
-                if (udevCtx)
-                {
-                    // TODO: Monitor hotplugged input
-                    udevMonitor = udev_monitor_new_from_netlink(udevCtx, "udev");
-                    if (udevMonitor)
+                    auto loadUdevFunction = [&](auto & targetFunctionPointer, const char* name)
                     {
-                        udev_monitor_filter_add_match_subsystem_devtype(udevMonitor, "input", NULL);
-                        udev_monitor_enable_receiving(udevMonitor);
+                            targetFunctionPointer = (std::remove_reference_t<decltype(targetFunctionPointer)>) dlsym(libudevLibrary, name);
+                            return targetFunctionPointer != nullptr;
+                    };
+                    
+                    if (!loadUdevFunction(udev_new, "udev_new")) return false;
+                    if (!loadUdevFunction(udev_unref, "udev_unref")) return false;
 
-                        hotplugFd = udev_monitor_get_fd(udevMonitor);
-                    }
+                    if (!loadUdevFunction(udev_monitor_new_from_netlink, "udev_monitor_new_from_netlink")) return false;
+                    if (!loadUdevFunction(udev_monitor_filter_add_match_subsystem_devtype, "udev_monitor_filter_add_match_subsystem_devtype")) return false;
+                    if (!loadUdevFunction(udev_monitor_enable_receiving, "udev_monitor_enable_receiving")) return false;
+                    if (!loadUdevFunction(udev_monitor_receive_device, "udev_monitor_receive_device")) return false;
+                    if (!loadUdevFunction(udev_monitor_get_fd, "udev_monitor_get_fd")) return false;
+                    if (!loadUdevFunction(udev_monitor_ref, "udev_monitor_ref")) return false;
+                    if (!loadUdevFunction(udev_monitor_unref, "udev_monitor_unref")) return false;
 
-                    // Initial scan
-                    udev_enumerate *udevEnumerator = udev_enumerate_new(udevCtx);
+                    if (!loadUdevFunction(udev_enumerate_new, "udev_enumerate_new")) return false;
+                    if (!loadUdevFunction(udev_enumerate_add_match_subsystem, "udev_enumerate_add_match_subsystem")) return false;
+                    if (!loadUdevFunction(udev_enumerate_add_match_property, "udev_enumerate_add_match_property")) return false;
+                    if (!loadUdevFunction(udev_enumerate_scan_devices, "udev_enumerate_scan_devices")) return false;
+                    if (!loadUdevFunction(udev_enumerate_get_list_entry, "udev_enumerate_get_list_entry")) return false;
+                    if (!loadUdevFunction(udev_enumerate_unref, "udev_enumerate_unref")) return false;
 
-                    if (udevEnumerator)
+                    if (!loadUdevFunction(udev_list_entry_get_next, "udev_list_entry_get_next")) return false;
+                    if (!loadUdevFunction(udev_list_entry_get_name, "udev_list_entry_get_name")) return false;
+
+                    if (!loadUdevFunction(udev_device_new_from_syspath, "udev_device_new_from_syspath")) return false;
+                    if (!loadUdevFunction(udev_device_get_devnode, "udev_device_get_devnode")) return false;
+                    if (!loadUdevFunction(udev_device_get_property_value, "udev_device_get_property_value")) return false;
+                    if (!loadUdevFunction(udev_device_unref, "udev_device_unref")) return false;
+
+                    udev* udevCtx = udev_new();
+                    if (udevCtx)
                     {
-                        udev_enumerate_add_match_subsystem(udevEnumerator, "input");
-                        udev_enumerate_add_match_property(udevEnumerator, "ID_INPUT_JOYSTICK", "1");
-
-                        udev_enumerate_scan_devices(udevEnumerator);
-                        udev_list_entry* deviceList = udev_enumerate_get_list_entry(udevEnumerator);
-
-                        udev_list_entry* element = deviceList;
-
-                        for (; element; element = udev_list_entry_get_next(element))
+                        // Setup monitoring for runtime plugging/unplugging
+                        udevMonitor = udev_monitor_new_from_netlink(udevCtx, "udev");
+                        if (udevMonitor)
                         {
-                            if (gamepadCount >= 4) break;
+                            udev_monitor_filter_add_match_subsystem_devtype(udevMonitor, "input", NULL);
+                            udev_monitor_enable_receiving(udevMonitor);
 
-                            const char* devicePath = udev_list_entry_get_name(element);
-                            udev_device* device = udev_device_new_from_syspath(udevCtx, devicePath);
-                            if (device)
+                            hotplugFd = udev_monitor_get_fd(udevMonitor);
+                        }
+
+                        // Initial scan
+                        udev_enumerate *udevEnumerator = udev_enumerate_new(udevCtx);
+                        if (udevEnumerator)
+                        {
+                            udev_enumerate_add_match_subsystem(udevEnumerator, "input");
+                            udev_enumerate_add_match_property(udevEnumerator, "ID_INPUT_JOYSTICK", "1");
+                            udev_enumerate_scan_devices(udevEnumerator);
+                            
+                            udev_list_entry* deviceList = udev_enumerate_get_list_entry(udevEnumerator);
+
+                            for (udev_list_entry* element = deviceList; element; element = udev_list_entry_get_next(element))
                             {
-                                const char* devNode = udev_device_get_devnode(device);
-                                if (devNode) //&& devicePath 
+                                if (gamepadCount >= 4) break;
+
+                                const char* devicePath = udev_list_entry_get_name(element);
+                                if(!devicePath) continue;
+                            
+                                udev_device* device = udev_device_new_from_syspath(udevCtx, devicePath);
+                                if (device)
                                 {
-                                    //printf("devNode = %s\n", devNode);
-                                    int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
-                                    if (possibleGamepadFd >= 0)
+                                    const char* devNode = udev_device_get_devnode(device);
+                                    if (devNode) //&& devicePath 
                                     {
-                                        // User needs to be in the "input" group for this to work.
-                                        // For more info on ioctl and the EVIOC macros:
-                                        // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
-                                       
-                                        // Query for info and capabilities
-                                        struct input_id devId;
-                                        ioctl(possibleGamepadFd, EVIOCGID, &devId);
-                                        char name[256] = {0};
-                                        ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
-                                        //printf("(%s) found (fd=%d).\n", name, possibleGamepadFd);
-                                       
-                                        // Interrogate the potential gamepad by checking if the device has the BTN_GAMEPAD button
-                                        // NOTE: We're working with bit arrays when using EVIOCGBIT
-                                        unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};
-                                        bool isGamepad = false;
-                                       
-                                        if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
+                                        //printf("devNode = %s\n", devNode);
+                                        int possibleGamepadFd = open(devNode, O_RDONLY | O_NONBLOCK);
+                                        if (possibleGamepadFd >= 0)
                                         {
-                                            unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
-                                            isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
-                                            if (isGamepad)
+                                            // User needs to be in the "input" group for this to work.
+                                            // For more info on ioctl and the EVIOC macros:
+                                            // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
+                                       
+                                            // Query for info and capabilities
+                                            struct input_id devId;
+                                            ioctl(possibleGamepadFd, EVIOCGID, &devId);
+                                            char name[256] = {0};
+                                            ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
+                                            //printf("(%s) found (fd=%d).\n", name, possibleGamepadFd);
+                                       
+                                            // Interrogate the potential gamepad by checking if the device has the BTN_GAMEPAD button
+                                            // NOTE: We're working with bit arrays when using EVIOCGBIT
+                                            unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};
+                                            bool isGamepad = false;
+                                       
+                                            if (ioctl(possibleGamepadFd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
                                             {
-                                                // Check for empty slot
-                                                for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                                                unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
+                                                isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
+                                                if (isGamepad)
                                                 {
-                                                    LinuxGamepad* gamepad = &gamepads[gamepadIndex];
-
-                                                    if (!gamepad->initialized)
+                                                    // Check for empty slot
+                                                    for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
                                                     {
-                                                        gamepad->Init(possibleGamepadFd, name, devNode);
-                                                        gamepadCount++;
+                                                        LinuxGamepad* gamepad = &gamepads[gamepadIndex];
+
+                                                        if (!gamepad->initialized)
+                                                        {
+                                                            gamepad->Init(possibleGamepadFd, name, devNode);
+                                                            gamepadCount++;
                                                         
-                                                        //printf("Initial scan of gamepad (%s) found (fd=%d) with dev node %s\n", gamepad->name, gamepad->fd, gamepad->devNode);
-                                                        break;
+                                                            //printf("Initial scan of gamepad (%s) found (fd=%d) with dev node %s\n", gamepad->name, gamepad->fd, gamepad->devNode);
+                                                            break;
+                                                        }
                                                     }
+
+                                                    // No empty slot available
                                                 }
-
-                                                // No empty slot available
                                             }
-                                        }
 
-                                        if (!isGamepad)
-                                            close(possibleGamepadFd);
+                                            if (!isGamepad)
+                                                close(possibleGamepadFd);
+                                        }
                                     }
+                                    udev_device_unref(device); // Will leak memory otherwise!
                                 }
-                                
-                                udev_device_unref(device); // Will leak memory otherwise!
                             }
                         }
+                        udev_enumerate_unref(udevEnumerator);
                     }
-                    
-                    udev_enumerate_unref(udevEnumerator);
-                }
 
-                udev_unref(udevCtx); // Should we do this even if we use udevMonitor? Does it create its own context?
+                    udev_unref(udevCtx); // Should we do this even if we use udevMonitor? Does it create its own context?
 
 #if 0
-                if (gamepadCount > 0)
-                {
-                    printf("Found %d gamepad%s\n", gamepadCount, (gamepadCount > 1) ? "s!" : "!");
-                    printf("After the initial scan:\n");
-                    for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                    if (gamepadCount > 0)
                     {
-                        LinuxGamepad* gamepad = &gamepads[gamepadIndex];
-                        printf("fd = %d, devnode = %s\n", gamepad->fd, gamepad->devNode);
+                        printf("Found %d gamepad%s\n", gamepadCount, (gamepadCount > 1) ? "s!" : "!");
+                        printf("After the initial scan:\n");
+                        for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                        {
+                            LinuxGamepad* gamepad = &gamepads[gamepadIndex];
+                            printf("[%s] fd = %d, devnode = %s\n", gamepad->name, gamepad->fd, gamepad->devNode);
+                        }
                     }
-                }
 #endif
+                }
                 
                 return true;
             }
@@ -2283,12 +2279,6 @@ namespace Thirteen
                                      {
                                          //printf("possible hotplug fd is %d\n", possibleGamepadFd);
                                          // Query for info and capabilities
-                                         
-                                         //struct input_id devId;
-                                         //ioctl(possibleGamepadFd, EVIOCGID, &devId);
-                                         
-                                         char name[maxGamepadNameLength] = {0};
-                                         ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
 
                                          // Interrogate the potential gamepad
                                          // NOTE: We're working with bit arrays when using EVIOCGBIT
@@ -2309,6 +2299,9 @@ namespace Thirteen
                                                      if (!gamepad->initialized)
                                                      {
 
+                                                         char name[maxGamepadNameLength] = {0};
+                                                         ioctl(possibleGamepadFd, EVIOCGNAME(sizeof(name)), name);
+                                                         
                                                          gamepad->Init(possibleGamepadFd, name, devNode);
                                                          gamepadCount++;
                                                          
@@ -2324,15 +2317,12 @@ namespace Thirteen
                                          // If we can't open the fd, then this might be something that got unplugged
                                          for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
                                          {
-                                             // TODO: !!!
                                              LinuxGamepad* gamepad = &gamepads[gamepadIndex];
                                              if (gamepad->initialized)
                                              {
                                                  bool isTheUnpluggedGamepad = strcmp(gamepad->devNode, devNode) == 0;
                                                  if (isTheUnpluggedGamepad)
                                                  {
-                                                     close(gamepad->fd);
-                                                     
                                                      gamepad->DeInit();
                                                      gamepadCount--;
                                                      break;
@@ -2341,19 +2331,19 @@ namespace Thirteen
                                          }
                                      }
 
-                                     // Check if we're using possibleGamepadFd, if not, close it
-                                     bool pluggedIn = false;
+                                     // Check if we ended up using possibleGamepadFd, if not, close it
+                                     bool deviceInUse = false;
                                      for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
                                      {
                                          LinuxGamepad* gamepad = &gamepads[gamepadIndex];
                                          if (possibleGamepadFd == gamepad->fd)
                                          {
-                                             pluggedIn = true;
+                                             deviceInUse = true;
                                              break;
                                          }
                                      }
 
-                                     if(!pluggedIn)
+                                     if(!deviceInUse)
                                          close(possibleGamepadFd);
 #if 0
                                      printf("Gamepad states after udev monitor:\n");
@@ -2402,16 +2392,20 @@ namespace Thirteen
 
                 dlclose(glLibrary);
                 dlclose(x11Library);
-                udev_monitor_unref(udevMonitor);
-                dlclose(libudevLibrary);
-                for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                
+                if(libudevLibrary)
                 {
-                    LinuxGamepad* gamepad = &gamepads[gamepadIndex];
-
-                    if (gamepad->initialized)
+                    udev_monitor_unref(udevMonitor);
+                    dlclose(libudevLibrary);
+                    for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
                     {
-                        gamepad->DeInit();
-                        gamepadCount--;
+                        LinuxGamepad* gamepad = &gamepads[gamepadIndex];
+
+                        if (gamepad->initialized)
+                        {
+                            gamepad->DeInit();
+                            gamepadCount--;
+                        }
                     }
                 }
             }
@@ -2447,7 +2441,7 @@ namespace Thirteen
             {
                 for (int controllerIndex = 0; controllerIndex < 4; ++controllerIndex)
                 {
-                    // Future reference: evdev emits event, unlike the state-based win32 XInput. Therefore, do no zero the current state.
+                    // Future reference: evdev emits event, unlike the state-based win32 XInput. Therefore, do no zero the current state by default.
                     //controllers[controllerIndex] = ControllerState{};
 
                     PlatformLinuxX11GL::LinuxGamepad* gamepad = &platform->gamepads[controllerIndex];
