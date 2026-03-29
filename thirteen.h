@@ -66,11 +66,27 @@ Chris Cascioli - GetWindowHandle() and warning cleanup
 #endif
 
 #ifdef THIRTEEN_PLATFORM_LINUX
+    #include <stdio.h>
+    #include <stdint.h>
+    #include <linux/input.h>
+    #include <poll.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+
     #include <dlfcn.h>
     #include <X11/Xlib.h>
     #include <GL/gl.h>
     #include <GL/glx.h>
     #include <GL/glext.h>
+
+    // https://www.kernel.org/pub/linux/utils/kernel/hotplug/libudev/ch01.html
+    // https://www.kernel.org/pub/linux/utils/kernel/hotplug/libudev/libudev-udev.html
+    // Forward declare
+    typedef struct udev            udev;
+    typedef struct udev_enumerate  udev_enumerate;
+    typedef struct udev_list_entry udev_list_entry;
+    typedef struct udev_device     udev_device;
+    typedef struct udev_monitor    udev_monitor;
 #endif
 
 // ========== Common Includes ==========
@@ -1717,9 +1733,97 @@ namespace Thirteen
         };
 
         #elif defined(THIRTEEN_PLATFORM_LINUX)
+        
+        struct LinuxGamepad
+        {
+            static const int maxDevNodeLength = 256;
+            static const int maxNameLength = 256;
+                
+            int fd = -1;
+            bool initialized = false;
+            char devNode[maxDevNodeLength] = {0};
+            char name[maxNameLength] = {0};
+
+            union
+            {
+                struct input_absinfo absInfos[6];
+                struct
+                {
+                    struct input_absinfo leftStickX, leftStickY;
+                    struct input_absinfo rightStickX, rightStickY;
+                    struct input_absinfo leftTrigger, rightTrigger;
+                };
+            };
+        };
+
+        void InitGamepad(LinuxGamepad* gamepad)
+        {
+            int absArray[] = {ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ};
+            for (unsigned int absIndex = 0; absIndex < (sizeof(absArray) / sizeof(absArray[0])); absIndex++)
+            {
+                struct input_absinfo* absInfo = &gamepad->absInfos[absIndex];
+                ioctl(gamepad->fd, EVIOCGABS(absArray[absIndex]), absInfo);
+            }
+            
+            char name[LinuxGamepad::maxNameLength] = {0};
+            ioctl(gamepad->fd, EVIOCGNAME(sizeof(name)), name);
+            
+            memcpy(gamepad->name, name, LinuxGamepad::maxNameLength);
+            gamepad->initialized = true;
+            //printf("Adding Gamepad:\nname: %s, fd = %d, devnode = %s\n", gamepad->name, gamepad->fd, gamepad->devNode);
+        }
+
+        void DeInitGamepad(LinuxGamepad* gamepad)
+        {
+            //printf("Removing Gamepad:\nname: %s, fd = %d, devnode = %s\n", gamepad->name, gamepad->fd, gamepad->devNode);
+            
+            close(gamepad->fd);
+            gamepad->fd = -1;
+            gamepad->initialized = false;
+            memset(gamepad->devNode, 0, LinuxGamepad::maxDevNodeLength);
+            memset(gamepad->name, 0, LinuxGamepad::maxNameLength);
+        }
+
+        bool TryAddGamepad(LinuxGamepad* gamepad, LinuxGamepad* gamepads)
+        {
+            // User needs to be in the "input" group for this to work.
+            // For more info on ioctl and the EVIOC macros:
+            // https://www.kernel.org/doc/html/latest/input/event-codes.html#input-event-codes
+                                       
+            // Interrogate the potential gamepad by checking if the device has the BTN_GAMEPAD button.
+            // TODO: There might be gamepads that emits several device nodes with BTN_GAMEPAD support.
+            // We might want to make sure that we use the correct device node by checking for other BTN_* we want the gamepad to have.
+            
+            // NOTE: We're working with bit arrays when using EVIOCGBIT
+            unsigned char keyBits[(KEY_MAX / 8) + 1] = {0};
+            bool isGamepad = false;
+                                       
+            if (ioctl(gamepad->fd, EVIOCGBIT(EV_KEY, sizeof(keyBits)), &keyBits) > 0)
+            {
+                unsigned char gamepadBit = keyBits[BTN_GAMEPAD / 8];
+                isGamepad = gamepadBit & (1UL << (BTN_GAMEPAD % 8)); 
+                if (isGamepad)
+                {
+                    // Check for empty slot
+                    for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                    {
+                        LinuxGamepad* g = &gamepads[gamepadIndex];
+
+                        if (!g->initialized)
+                        {
+                            InitGamepad(gamepad);
+                            *g = *gamepad;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
 
         struct PlatformLinuxX11GL
-        {
+        {            
             void * x11Library = nullptr;
             void * glLibrary = nullptr;
 
@@ -1757,6 +1861,42 @@ namespace Thirteen
 
             GLuint texture = 0;
             GLuint framebuffer = 0;
+            
+            udev *(*udev_new)(void) = nullptr;
+            void (*udev_unref)(udev *) = nullptr;
+            
+            udev_monitor *(*udev_monitor_new_from_netlink)(udev *, const char *) = nullptr;
+            int (*udev_monitor_filter_add_match_subsystem_devtype)(struct udev_monitor *, const char *, const char *) = nullptr;
+            int (*udev_monitor_enable_receiving)(struct udev_monitor *) = nullptr;
+            int (*udev_monitor_get_fd)(struct udev_monitor *) = nullptr;
+            udev_device *(*udev_monitor_receive_device)(struct udev_monitor *) = nullptr;
+            udev_monitor *(*udev_monitor_ref)(udev_monitor *) = nullptr;
+            udev_monitor *(*udev_monitor_unref)(udev_monitor *) = nullptr;
+            
+            udev_enumerate *(*udev_enumerate_new)(udev *) = nullptr;
+            int (*udev_enumerate_add_match_subsystem)(udev_enumerate *, const char *) = nullptr;
+            int (*udev_enumerate_add_match_property)(udev_enumerate *, const char *, const char *) = nullptr;
+            int (*udev_enumerate_scan_devices)(udev_enumerate *) = nullptr;
+            udev_list_entry *(*udev_enumerate_get_list_entry)(udev_enumerate *) = nullptr;
+            void  (*udev_enumerate_unref)(udev_enumerate *) = nullptr;
+ 
+            udev_list_entry *(*udev_list_entry_get_next)(udev_list_entry *) = nullptr;
+            const char *(*udev_list_entry_get_name)(udev_list_entry *) = nullptr;
+ 
+            udev_device *(*udev_device_new_from_syspath)(udev *, const char *) = nullptr;
+            const char *(*udev_device_get_devnode)(udev_device *) = nullptr;
+            const char *(*udev_device_get_action)(udev_device *) = nullptr;
+            const char *(*udev_device_get_property_value)(udev_device *, const char *) = nullptr;
+            void (*udev_device_unref)(udev_device *) = nullptr;
+
+            void * libudevLibrary = nullptr;
+            
+
+            int hotplugFd = -1;
+            udev_monitor* udevMonitor = nullptr;
+
+            LinuxGamepad gamepads[4] = {};
+            int gamepadCount = 0;
 
             bool InitWindow(uint32 width, uint32 height)
             {
@@ -1969,9 +2109,117 @@ namespace Thirteen
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
                 glFramebufferTexture(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0);
 
+                libudevLibrary = dlopen("libudev.so.1", RTLD_LAZY | RTLD_LOCAL);
+                if (!libudevLibrary)
+                {
+                    libudevLibrary =  dlopen("libudev.so", RTLD_LAZY | RTLD_LOCAL);
+                }
+
+                if (libudevLibrary)
+                {
+                    auto loadUdevFunction = [&](auto & targetFunctionPointer, const char* name)
+                    {
+                            targetFunctionPointer = (std::remove_reference_t<decltype(targetFunctionPointer)>) dlsym(libudevLibrary, name);
+                            return targetFunctionPointer != nullptr;
+                    };
+                    
+                    if (!loadUdevFunction(udev_new, "udev_new")) return false;
+                    if (!loadUdevFunction(udev_unref, "udev_unref")) return false;
+
+                    if (!loadUdevFunction(udev_monitor_new_from_netlink, "udev_monitor_new_from_netlink")) return false;
+                    if (!loadUdevFunction(udev_monitor_filter_add_match_subsystem_devtype, "udev_monitor_filter_add_match_subsystem_devtype")) return false;
+                    if (!loadUdevFunction(udev_monitor_enable_receiving, "udev_monitor_enable_receiving")) return false;
+                    if (!loadUdevFunction(udev_monitor_receive_device, "udev_monitor_receive_device")) return false;
+                    if (!loadUdevFunction(udev_monitor_get_fd, "udev_monitor_get_fd")) return false;
+                    if (!loadUdevFunction(udev_monitor_ref, "udev_monitor_ref")) return false;
+                    if (!loadUdevFunction(udev_monitor_unref, "udev_monitor_unref")) return false;
+
+                    if (!loadUdevFunction(udev_enumerate_new, "udev_enumerate_new")) return false;
+                    if (!loadUdevFunction(udev_enumerate_add_match_subsystem, "udev_enumerate_add_match_subsystem")) return false;
+                    if (!loadUdevFunction(udev_enumerate_add_match_property, "udev_enumerate_add_match_property")) return false;
+                    if (!loadUdevFunction(udev_enumerate_scan_devices, "udev_enumerate_scan_devices")) return false;
+                    if (!loadUdevFunction(udev_enumerate_get_list_entry, "udev_enumerate_get_list_entry")) return false;
+                    if (!loadUdevFunction(udev_enumerate_unref, "udev_enumerate_unref")) return false;
+
+                    if (!loadUdevFunction(udev_list_entry_get_next, "udev_list_entry_get_next")) return false;
+                    if (!loadUdevFunction(udev_list_entry_get_name, "udev_list_entry_get_name")) return false;
+
+                    if (!loadUdevFunction(udev_device_new_from_syspath, "udev_device_new_from_syspath")) return false;
+                    if (!loadUdevFunction(udev_device_get_devnode, "udev_device_get_devnode")) return false;
+                    if (!loadUdevFunction(udev_device_get_action, "udev_device_get_action")) return false;
+                    if (!loadUdevFunction(udev_device_get_property_value, "udev_device_get_property_value")) return false;
+                    if (!loadUdevFunction(udev_device_unref, "udev_device_unref")) return false;
+
+                    udev* udevCtx = udev_new();
+                    if (udevCtx)
+                    {
+                        // Setup monitoring for runtime plugging/unplugging
+                        udevMonitor = udev_monitor_new_from_netlink(udevCtx, "udev");
+                        if (udevMonitor)
+                        {
+                            udev_monitor_filter_add_match_subsystem_devtype(udevMonitor, "input", NULL);
+                            udev_monitor_enable_receiving(udevMonitor);
+
+                            hotplugFd = udev_monitor_get_fd(udevMonitor);
+                        }
+
+                        // Initial scan
+                        udev_enumerate *udevEnumerator = udev_enumerate_new(udevCtx);
+                        if (udevEnumerator)
+                        {
+                            udev_enumerate_add_match_subsystem(udevEnumerator, "input");
+                            udev_enumerate_add_match_property(udevEnumerator, "ID_INPUT_JOYSTICK", "1");
+                            udev_enumerate_scan_devices(udevEnumerator);
+                            
+                            udev_list_entry* deviceList = udev_enumerate_get_list_entry(udevEnumerator);
+
+                            for (udev_list_entry* element = deviceList; element; element = udev_list_entry_get_next(element))
+                            {
+                                if (gamepadCount >= 4) break;
+                                
+                                LinuxGamepad newGamepad = LinuxGamepad{};
+
+                                const char* devicePath = udev_list_entry_get_name(element);
+                                if (!devicePath) continue;
+
+                                udev_device* device = udev_device_new_from_syspath(udevCtx, devicePath);
+
+                                if (device)
+                                {
+                                    const char* devNode = udev_device_get_devnode(device);
+                                    if (devNode)
+                                    {
+                                        if(LinuxGamepad::maxDevNodeLength > strlen(devNode))
+                                        {
+                                            memcpy(newGamepad.devNode, devNode, strlen(devNode));
+                                            newGamepad.fd = open(newGamepad.devNode, O_RDONLY | O_NONBLOCK);
+                                        }
+                                    }
+                                }
+                                else continue;
+
+                                udev_device_unref(device); // Will leak memory otherwise!
+                                
+                                if (newGamepad.fd >= 0)
+                                {
+                                    if (TryAddGamepad(&newGamepad, gamepads))
+                                        gamepadCount++;
+                                }
+                                
+                                if (!newGamepad.initialized)
+                                    close(newGamepad.fd);
+
+                            }
+                            udev_enumerate_unref(udevEnumerator);
+                        }
+                    }
+                    
+                    udev_unref(udevCtx); // Should we do this even if we use udevMonitor? Does it create its own context?
+                }
+                
                 return true;
             }
-
+            
             int remapMouseButton(int x11Button)
             {
                 switch (x11Button)
@@ -1998,42 +2246,114 @@ namespace Thirteen
             }
 
             void PumpMessages()
-            {
-                XEvent event;
+             {
+                 XEvent event;
 
-                while (XPending(x11Display)) {
-                    XNextEvent(x11Display, &event);
-                    switch (event.type)
-                    {
-                    case KeyPress:
-                        if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
-                        {
-                            keys[keycode] = true;
-                        }
-                        break;
-                    case KeyRelease:
-                        if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
-                        {
-                            keys[keycode] = false;
-                        }
-                        break;
-                    case ButtonPress:
-                        mouseButtons[remapMouseButton(event.xbutton.button)] = true;
-                        break;
-                    case ButtonRelease:
-                        mouseButtons[remapMouseButton(event.xbutton.button)] = false;
-                        break;
-                    case MotionNotify:
-                        mouseX = event.xmotion.x;
-                        mouseY = event.xmotion.y;
-                        break;
-                    case ClientMessage:
-                        if ((Atom)event.xclient.data.l[0] == closeWindowAtom)
-                            shouldQuit = true;
-                        break;
-                    }
-                }
-            }
+                 while (XPending(x11Display)) {
+                     XNextEvent(x11Display, &event);
+                     switch (event.type)
+                     {
+                         case KeyPress:
+                             if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
+                             {
+                                 keys[keycode] = true;
+                             }
+                             break;
+                         case KeyRelease:
+                             if (int keycode = remapKeyEvent(event.xkey); unsigned(keycode) < 256)
+                             {
+                                 keys[keycode] = false;
+                             }
+                             break;
+                         case ButtonPress:
+                             mouseButtons[remapMouseButton(event.xbutton.button)] = true;
+                             break;
+                         case ButtonRelease:
+                             mouseButtons[remapMouseButton(event.xbutton.button)] = false;
+                             break;
+                         case MotionNotify:
+                             mouseX = event.xmotion.x;
+                             mouseY = event.xmotion.y;
+                             break;
+                         case ClientMessage:
+                             if ((Atom)event.xclient.data.l[0] == closeWindowAtom)
+                                 shouldQuit = true;
+                             break;
+                     }
+                 }
+
+                 // Check if any new gamepads was plugged/unplugged during runtime
+                 
+                 if (udevMonitor && hotplugFd >= 0) 
+                 {
+                     struct pollfd pollFd;
+                     pollFd.fd = hotplugFd;
+                     pollFd.events = POLLIN;
+                     pollFd.revents = 0;
+                     
+                     if (poll(&pollFd, 1, 0) > 0)
+                     {
+                         LinuxGamepad newGamepad = LinuxGamepad{};
+                         struct udev_device* device = udev_monitor_receive_device(udevMonitor);
+                         const char* devNode = nullptr;
+                         const char* deviceAction = nullptr;
+                         
+                         if (device)
+                         {
+                             const char* propValue = udev_device_get_property_value(device, "ID_INPUT_JOYSTICK");
+                             if(propValue && strcmp(propValue, "1") == 0)
+                                 devNode = udev_device_get_devnode(device);
+                             
+                             deviceAction = udev_device_get_action(device);
+                         }
+
+                         if (devNode)
+                         {
+                             if (LinuxGamepad::maxDevNodeLength > strlen(devNode))
+                             {
+                                 memcpy(newGamepad.devNode, devNode, strlen(devNode));
+                                 
+                                 if (deviceAction)
+                                 {
+                                     if (strcmp(deviceAction, "add") == 0)
+                                     {
+                                         newGamepad.fd = open(newGamepad.devNode, O_RDONLY | O_NONBLOCK);
+                                         if (TryAddGamepad(&newGamepad, gamepads))
+                                         {
+                                             gamepadCount++;
+                                         }
+                                     }
+                                     else if(strcmp(deviceAction, "remove") == 0)
+                                     {
+                                         for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                                         {
+                                             LinuxGamepad* gamepad = &gamepads[gamepadIndex];
+                                             
+                                             if (gamepad->initialized)
+                                             {
+                                                 bool isTheUnpluggedGamepad = strcmp(gamepad->devNode, newGamepad.devNode) == 0;
+                                                 
+                                                 if (isTheUnpluggedGamepad)
+                                                 {
+                                                     DeInitGamepad(gamepad);
+                                                     gamepadCount--;
+                                                     break;
+                                                 }
+                                             }
+                                         }
+                                     }
+                                 }
+                             }
+                         }
+                         
+                         if(!newGamepad.initialized)
+                             close(newGamepad.fd);
+                         
+                         udev_device_unref(device);
+                     }
+                 }
+             }
+
 
             void SetTitle(const char* title)
             {
@@ -2064,6 +2384,22 @@ namespace Thirteen
 
                 dlclose(glLibrary);
                 dlclose(x11Library);
+                
+                if(libudevLibrary)
+                {
+                    udev_monitor_unref(udevMonitor);
+                    dlclose(libudevLibrary);
+                    for (int gamepadIndex = 0; gamepadIndex < 4; gamepadIndex++)
+                    {
+                        LinuxGamepad* gamepad = &gamepads[gamepadIndex];
+
+                        if (gamepad->initialized)
+                        {
+                            DeInitGamepad(gamepad);
+                            gamepadCount--;
+                        }
+                    }
+                }
             }
 
             bool DoRender(const uint8* pixels)
@@ -2089,11 +2425,188 @@ namespace Thirteen
             bool Init(PlatformLinuxX11GL * platform, uint32, uint32)
             {
                 this->platform = platform;
+
                 return true;
             }
 
             bool Render(const uint8* pixels, uint32, uint32, bool)
             {
+                for (int controllerIndex = 0; controllerIndex < 4; ++controllerIndex)
+                {
+                    // Future reference: evdev emits event, unlike the state-based win32 XInput. Therefore, do no zero the current state by default.
+                    //controllers[controllerIndex] = ControllerState{};
+
+                    LinuxGamepad* gamepad = &platform->gamepads[controllerIndex];
+                    ControllerState* controller = &controllers[controllerIndex];
+                    
+                    if (gamepad->fd < 0)
+                    {
+                        *controller = ControllerState{};
+                        continue;
+                    }
+                    
+                    struct pollfd pollFd;
+                    pollFd.fd = gamepad->fd;
+                    pollFd.events = POLLIN;
+                    pollFd.revents = 0;
+
+                    int pollResult = poll(&pollFd, 1, 0);
+                    if (pollResult > 0)
+                    {
+                        struct input_event events[32];
+                        int bytesRead = read(gamepad->fd, &events, sizeof(events));
+                        //printf("slot %d (fd=%d): poll hit, read %d bytes\n", controllerIndex, pollFd.fd, bytesRead);
+                        
+                        if(bytesRead > 0)
+                        {
+                            //printf("bytesRead > 0 (fd=%d)\n", pollFd.fd);
+                            int eventCount = bytesRead / sizeof(struct input_event);
+                            for (int eventIndex = 0; eventIndex < eventCount; eventIndex++)
+                            {
+                                struct input_event* event = &events[eventIndex];
+                                if (event->type == EV_KEY)
+                                {
+                                    bool pressed = event->value == 1;
+                                    //bool released = event->value == 0;
+                                    //bool autoRepeat = event->value == 2;
+                                    
+                                    if (event->code == BTN_SOUTH)
+                                        pressed ? controller->buttons |= ControllerButton::A : controller->buttons &= ~ControllerButton::A;
+                                    else if (event->code == BTN_EAST)
+                                        pressed ? controller->buttons |= ControllerButton::B : controller->buttons &= ~ControllerButton::B;
+                                    else if (event->code == BTN_WEST)
+                                        pressed ? controller->buttons |= ControllerButton::X : controller->buttons &= ~ControllerButton::X;
+                                    else if (event->code == BTN_NORTH)
+                                        pressed ? controller->buttons |= ControllerButton::Y : controller->buttons &= ~ControllerButton::Y;
+
+                                    else if (event->code == BTN_DPAD_RIGHT)
+                                        pressed ? controller->buttons |= ControllerButton::DPadRight : controller->buttons &= ~ControllerButton::DPadRight;
+                                    else if (event->code == BTN_DPAD_DOWN)
+                                        pressed ? controller->buttons |= ControllerButton::DPadDown : controller->buttons &= ~ControllerButton::DPadDown;
+                                    else if (event->code == BTN_DPAD_LEFT)
+                                        pressed ? controller->buttons |= ControllerButton::DPadLeft : controller->buttons &= ~ControllerButton::DPadLeft;
+                                    else if (event->code == BTN_DPAD_UP)
+                                        pressed ? controller->buttons |= ControllerButton::DPadUp : controller->buttons &= ~ControllerButton::DPadUp;
+                                    
+                                    else if (event->code == BTN_THUMBL)
+                                        pressed ? controller->buttons |= ControllerButton::LeftThumb : controller->buttons &= ~ControllerButton::LeftThumb;
+                                    else if (event->code == BTN_THUMBR)
+                                        pressed ? controller->buttons |= ControllerButton::RightThumb : controller->buttons &= ~ControllerButton::RightThumb;
+
+                                    else if (event->code == BTN_TL)
+                                        pressed ? controller->buttons |= ControllerButton::LeftShoulder : controller->buttons &= ~ControllerButton::LeftShoulder;
+                                    else if (event->code == BTN_TR)
+                                        pressed ? controller->buttons |= ControllerButton::RightShoulder : controller->buttons &= ~ControllerButton::RightShoulder;
+
+                                    else if (event->code == BTN_SELECT)
+                                        pressed ? controller->buttons |= ControllerButton::Back : controller->buttons &= ~ControllerButton::Back;
+                                    else if (event->code == BTN_START)
+                                        pressed ? controller->buttons |= ControllerButton::Start : controller->buttons &= ~ControllerButton::Start;
+                                    
+                                }
+                                else if (event->type == EV_ABS)
+                                {
+
+                                    // For some controllers, DPAD will come through ABS_HAT codes
+                                    if (event->code == ABS_HAT0X)
+                                    {
+                                        if (event->value == 1)
+                                            controller->buttons |= ControllerButton::DPadRight;
+                                        else if (event->value == -1)
+                                            controller->buttons |= ControllerButton::DPadLeft;
+                                        else if (event->value == 0) // left/right was released
+                                            controller->buttons &= ~(ControllerButton::DPadRight | ControllerButton::DPadLeft);
+                                    }
+                                    else if (event->code == ABS_HAT0Y)
+                                    {
+                                        if (event->value == 1)
+                                            controller->buttons |= ControllerButton::DPadDown;
+                                        else if (event->value == -1)
+                                            controller->buttons |= ControllerButton::DPadUp;
+                                        else if (event->value == 0) // up/down was released
+                                            controller->buttons &= ~(ControllerButton::DPadUp | ControllerButton::DPadDown);
+                                    }
+                                    
+                                    if (event->code == ABS_X)
+                                    {
+                                        // X values of the left stick
+
+                                        // Map an arbitrary range [absInfo.minimum, absInfo.maximum] to [-1, 1]
+                                        // by first normalizing to [0, 1] then scale it to [-1, 1]
+
+                                        controller->leftThumbX = (float)(event->value - gamepad->leftStickX.minimum) / (float)(gamepad->leftStickX.maximum - gamepad->leftStickX.minimum);
+                                        controller->leftThumbX = controller->leftThumbX*2 - 1;
+
+                                        // deadzone
+                                        //int centerX = (absInfo.maximum + absInfo.minimum) / 2;
+
+                                    }
+                                    else if (event->code == ABS_Y)
+                                    {
+                                        // Y values of the left stick
+
+                                        controller->leftThumbY = (float)(event->value - gamepad->leftStickY.minimum) / (float)(gamepad->leftStickY.maximum - gamepad->leftStickY.minimum);
+                                        controller->leftThumbY = controller->leftThumbY*2 - 1;
+
+                                        //int centerY = (gamepad->leftStickY.maximum + gamepad->leftStickY.minimum) / 2;
+                                        
+                                    }
+                                    else if (event->code == ABS_RX)
+                                    {
+                                        // X values of the right stick
+
+                                        controller->rightThumbX = (float)(event->value - gamepad->rightStickX.minimum) / (float)(gamepad->rightStickX.maximum - gamepad->rightStickX.minimum);
+                                        controller->rightThumbX = controller->rightThumbX*2 - 1;
+                                        
+                                        // int centerX = (absInfo.maximum + absInfo.minimum) / 2;
+
+                                    }
+                                    else if (event->code == ABS_RY)
+                                    {
+                                        // Y values of the right stick
+
+                                        controller->rightThumbY = (float)(event->value - gamepad->rightStickY.minimum) / (float)(gamepad->rightStickY.maximum - gamepad->rightStickY.minimum);
+                                        controller->rightThumbY = controller->rightThumbY*2 - 1;
+
+                                        //int centerY = (absInfo.maximum + absInfo.minimum) / 2;
+                                        
+                                    }
+                                    else if (event->code == ABS_Z)
+                                    {
+                                        // Left trigger
+                                        // Don't normalize to [-1, 1], only [0, 1]
+                                        controller->leftTrigger = (float)(event->value - gamepad->leftTrigger.minimum) / (float)(gamepad->leftTrigger.maximum - gamepad->leftTrigger.minimum);
+                                    }
+                                    else if (event->code == ABS_RZ)
+                                    {
+                                        controller->rightTrigger = (float)(event->value - gamepad->rightTrigger.minimum) / (float)(gamepad->rightTrigger.maximum - gamepad->rightTrigger.minimum);
+                                    }
+                                }
+                                else if (event->type == EV_SYN)
+                                {
+                                    if (event->code == SYN_DROPPED)
+                                    {
+                                        // TODO: Handle missed event by
+                                        // https://www.freedesktop.org/software/libevdev/doc/latest/syn_dropped.html
+                                        //printf("SYN_DROPPED\n");
+                                    }
+                                }
+                            }
+                        }
+                        else if (bytesRead < 0)
+                        {
+                            // Gamepad most likely unplugged before we could process it.
+                            if (errno == ENODEV)
+                            {
+                                DeInitGamepad(gamepad);
+                                *controller = ControllerState{};
+                                platform->gamepadCount--;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                
                 return platform->DoRender(pixels);
             }
 
