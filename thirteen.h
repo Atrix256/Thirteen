@@ -2,6 +2,9 @@
 Thirteen v1.0.0
 MIT licensed https://github.com/Atrix256/Thirteen
 
+This define must be set in one cpp file before including this header, to create the implementation:
+#define THIRTEEN_IMPLEMENTATION
+
 Thirteen is a header-only C++ library that initializes a window and gives you a pointer to RGBA uint8 pixels to write to, which are copied to the screen every time you call Render().
 
 It is inspired by the simplicity of the Mode 13h days where you initialized the graphics mode and then started writing pixels directly to the screen. Just include the header, initialize, and start drawing!
@@ -59,6 +62,7 @@ Chris Cascioli - GetWindowHandle() and warning cleanup
     #pragma comment(lib, "xinput.lib")
 
     #define DX12VALIDATION() (_DEBUG && false)
+    #define ALIGN(_alignment, _val) (((_val + _alignment - 1) / _alignment) * _alignment)
 #endif
 
 #ifdef THIRTEEN_PLATFORM_LINUX
@@ -417,12 +421,14 @@ namespace Thirteen
             ID3D12CommandAllocator* commandAllocator = nullptr;
             ID3D12GraphicsCommandList* commandList = nullptr;
             ID3D12Resource* uploadBuffer = nullptr;
+            size_t uploadBufferPitch = 0;
             ID3D12Fence* fence = nullptr;
             HANDLE fenceEvent = nullptr;
             UINT64 fenceValue = 0;
             UINT frameIndex = 0;
             UINT rtvDescriptorSize = 0;
             bool tearingSupported = false;
+            bool unrestrictedBufferTextureCopyPitchSupported = false;
 
             void WaitForGpu()
             {
@@ -459,9 +465,11 @@ namespace Thirteen
                 D3D12_HEAP_PROPERTIES heapProps = {};
                 heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
 
+                uploadBufferPitch = unrestrictedBufferTextureCopyPitchSupported ? (width * 4) : ALIGN(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT, (width * 4));
+
                 D3D12_RESOURCE_DESC bufferDesc = {};
                 bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-                bufferDesc.Width = width * height * 4;
+                bufferDesc.Width = uploadBufferPitch * height;
                 bufferDesc.Height = 1;
                 bufferDesc.DepthOrArraySize = 1;
                 bufferDesc.MipLevels = 1;
@@ -501,6 +509,13 @@ namespace Thirteen
 
                 if (FAILED(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device))))
                     return false;
+
+                // get unrestrictedBufferTextureCopyPitchSupported
+                {
+                    D3D12_FEATURE_DATA_D3D12_OPTIONS13 options = {};
+                    if (SUCCEEDED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS13, &options, sizeof(options))))
+                        unrestrictedBufferTextureCopyPitchSupported = options.UnrestrictedBufferTextureCopyPitchSupported != FALSE;
+                }
 
                 #if DX12VALIDATION()
                 ID3D12InfoQueue* infoQueue = nullptr;
@@ -662,7 +677,20 @@ namespace Thirteen
                 void* mappedData = nullptr;
                 D3D12_RANGE readRange = { 1, 0 };
                 uploadBuffer->Map(0, &readRange, &mappedData);
-                memcpy(mappedData, pixels, width * height * 4);
+
+                if (uploadBufferPitch != width * 4)
+                {
+                    for (uint32 iy = 0; iy < height; ++iy)
+                    {
+                        uint8* dest = &((uint8*)mappedData)[iy * uploadBufferPitch];
+                        const uint8* src = &pixels[iy * width * 4];
+                        memcpy(dest, src, width * 4);
+                    }
+                }
+                else
+                {
+                    memcpy(mappedData, pixels, width * height * 4);
+                }
                 uploadBuffer->Unmap(0, nullptr);
 
                 commandAllocator->Reset();
@@ -688,7 +716,7 @@ namespace Thirteen
                 src.PlacedFootprint.Footprint.Width = width;
                 src.PlacedFootprint.Footprint.Height = height;
                 src.PlacedFootprint.Footprint.Depth = 1;
-                src.PlacedFootprint.Footprint.RowPitch = width * 4;
+                src.PlacedFootprint.Footprint.RowPitch = (UINT)uploadBufferPitch;
 
                 commandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 
